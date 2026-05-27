@@ -33,9 +33,17 @@ PORT=3000 ./bgpicker
 
 The binary embeds `frontend/dist` — no separate static file hosting needed.
 
+## Deploying to AWS
+
+See **[DEPLOY.md](DEPLOY.md)** for full instructions. Two options are covered:
+
+- **Lambda + S3** (~$0/month) — recommended; truly serverless, no idle cost
+- **EC2 t4g.nano** (~$3.50/month or ~$0.85/month if stopped between sessions)
+
 ## Data
 
-State is persisted to `data.json` in the working directory.
+State is persisted to `data.json` locally, or to an S3 object when running in Lambda
+(set the `STATE_BUCKET` environment variable).
 
 ## API
 
