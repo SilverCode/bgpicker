@@ -1,19 +1,31 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 )
 
 //go:embed frontend/dist
 var staticFiles embed.FS
+
+// s3Client is non-nil when running in Lambda; nil means use local file.
+var s3Client *s3.Client
 
 // Person represents a player in the rotation
 type Person struct {
@@ -49,8 +61,10 @@ type State struct {
 }
 
 var (
-	mu       sync.RWMutex
-	dataFile = "data.json"
+	mu          sync.RWMutex
+	dataFile    = "data.json"
+	s3Bucket    = os.Getenv("STATE_BUCKET") // set when running in Lambda
+	s3StateKey  = "data.json"
 )
 
 // nextUpcomingTuesdayFrom returns the next Tuesday on or after t (midnight local).
@@ -65,27 +79,55 @@ func advanceSession(base time.Time) time.Time {
 	return nextUpcomingTuesdayFrom(base.AddDate(0, 0, 14))
 }
 
-func loadState() (*State, error) {
+func readStateBytes() ([]byte, error) {
+	if s3Client != nil {
+		out, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+			Bucket: aws.String(s3Bucket),
+			Key:    aws.String(s3StateKey),
+		})
+		if err != nil {
+			// NoSuchKey → treat as empty state
+			return nil, nil
+		}
+		defer out.Body.Close()
+		return io.ReadAll(out.Body)
+	}
 	data, err := os.ReadFile(dataFile)
 	if os.IsNotExist(err) {
-		s := &State{People: []Person{}, History: []Pick{}}
-		next := nextUpcomingTuesdayFrom(time.Now())
-		s.NextSession = &next
-		return s, nil
+		return nil, nil
 	}
+	return data, err
+}
+
+func writeStateBytes(data []byte) error {
+	if s3Client != nil {
+		_, err := s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket:      aws.String(s3Bucket),
+			Key:         aws.String(s3StateKey),
+			Body:        bytes.NewReader(data),
+			ContentType: aws.String("application/json"),
+		})
+		return err
+	}
+	return os.WriteFile(dataFile, data, 0644)
+}
+
+func loadState() (*State, error) {
+	data, err := readStateBytes()
 	if err != nil {
 		return nil, err
 	}
-	var s State
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
+	s := &State{People: []Person{}, History: []Pick{}}
+	if data != nil {
+		if err := json.Unmarshal(data, s); err != nil {
+			return nil, err
+		}
 	}
-	// Populate a default session date if none is stored yet
 	if s.NextSession == nil {
 		next := nextUpcomingTuesdayFrom(time.Now())
 		s.NextSession = &next
 	}
-	return &s, nil
+	return s, nil
 }
 
 func saveState(s *State) error {
@@ -93,7 +135,7 @@ func saveState(s *State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dataFile, data, 0644)
+	return writeStateBytes(data)
 }
 
 func generateID() string {
@@ -499,17 +541,15 @@ func handleReorder(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, s)
 }
 
-func main() {
+func buildMux() http.Handler {
 	mux := http.NewServeMux()
 
-	// Serve embedded frontend (strip the "frontend/dist" prefix)
 	distFS, err := fs.Sub(staticFiles, "frontend/dist")
 	if err != nil {
 		log.Fatalf("could not sub embed FS: %v", err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(distFS)))
 
-	// API routes
 	mux.HandleFunc("GET /api/state", handleGetState)
 	mux.HandleFunc("POST /api/people", handleAddPerson)
 	mux.HandleFunc("DELETE /api/people/{id}", handleDeletePerson)
@@ -520,12 +560,27 @@ func main() {
 	mux.HandleFunc("PUT /api/people/reorder", handleReorder)
 	mux.HandleFunc("PUT /api/session", handleSetSession)
 
+	return corsMiddleware(mux)
+}
+
+func main() {
+	// Initialise S3 client when running inside Lambda
+	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+		cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+		if err != nil {
+			log.Fatalf("failed to load AWS config: %v", err)
+		}
+		s3Client = s3.NewFromConfig(cfg)
+		log.Printf("bgpicker starting in Lambda mode (bucket: %s)", s3Bucket)
+		lambda.Start(httpadapter.NewV2(buildMux()).ProxyWithContext)
+		return
+	}
+
+	// Local / EC2 mode — plain HTTP server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
-	handler := corsMiddleware(mux)
 	log.Printf("bgpicker listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	log.Fatal(http.ListenAndServe(":"+port, buildMux()))
 }
