@@ -145,12 +145,22 @@ aws lambda create-function-url-config \
   --region "$AWS_REGION" \
   --no-cli-pager
 
+# Allow unauthenticated access via the Function URL
 aws lambda add-permission \
   --function-name "$FUNCTION_NAME" \
   --statement-id FunctionURLAllowPublicAccess \
   --action lambda:InvokeFunctionUrl \
   --principal "*" \
   --function-url-auth-type NONE \
+  --region "$AWS_REGION" \
+  --no-cli-pager
+
+# Allow direct invocation (required in addition to the URL permission)
+aws lambda add-permission \
+  --function-name "$FUNCTION_NAME" \
+  --statement-id FunctionAllowPublicInvoke \
+  --action lambda:InvokeFunction \
+  --principal "*" \
   --region "$AWS_REGION" \
   --no-cli-pager
 ```
