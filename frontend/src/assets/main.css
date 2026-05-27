@@ -1,0 +1,50 @@
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #252836;
+  --border: #2e3147;
+  --accent: #7c6af7;
+  --accent-light: #9b8dff;
+  --accent-dim: rgba(124, 106, 247, 0.15);
+  --success: #4caf7d;
+  --success-dim: rgba(76, 175, 125, 0.15);
+  --danger: #e05c5c;
+  --danger-dim: rgba(224, 92, 92, 0.12);
+  --text: #e8eaf0;
+  --text-muted: #8b8fa8;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+input {
+  font-family: inherit;
+  outline: none;
+}
+
+#app {
+  min-height: 100vh;
+}
