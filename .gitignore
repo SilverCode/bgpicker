@@ -24,6 +24,9 @@ Thumbs.db
 # Claude Code project files
 .claude/
 
+# Lambda deployment artefact (built by `make lambda`)
+bgpicker-lambda.zip
+
 # Unused create-vue scaffolding
 frontend/.editorconfig
 frontend/.gitattributes
