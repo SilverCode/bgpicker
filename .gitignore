@@ -23,3 +23,14 @@ Thumbs.db
 
 # Claude Code project files
 .claude/
+
+# Unused create-vue scaffolding
+frontend/.editorconfig
+frontend/.gitattributes
+frontend/.gitignore
+frontend/.oxlintrc.json
+frontend/.prettierrc.json
+frontend/README.md
+frontend/eslint.config.ts
+frontend/tsconfig.vitest.json
+frontend/vitest.config.ts
