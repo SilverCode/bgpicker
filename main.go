@@ -242,22 +242,6 @@ func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-// normalizePositions ensures positions are contiguous 0..n-1.
-func normalizePositions(people []Person) []Person {
-	sorted := make([]Person, len(people))
-	copy(sorted, people)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].Position < sorted[i].Position {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
-	for i := range sorted {
-		sorted[i].Position = i
-	}
-	return sorted
-}
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -304,12 +288,9 @@ func makeHandleAddPerson(store StateStore) http.HandlerFunc {
 		}
 		var created Person
 		err := store.Update(func(s *State) error {
-			created = Person{
-				ID:       generateID(),
-				Name:     req.Name,
-				Position: len(s.People),
-			}
-			s.People = append(s.People, created)
+			q := NewQueue(s.People)
+			created = q.Add(Person{ID: generateID(), Name: req.Name})
+			s.People = q.People()
 			return nil
 		})
 		if err != nil {
@@ -326,19 +307,11 @@ func makeHandleDeletePerson(store StateStore) http.HandlerFunc {
 		id := r.PathValue("id")
 		var result *State
 		err := store.Update(func(s *State) error {
-			found := false
-			filtered := []Person{}
-			for _, p := range s.People {
-				if p.ID == id {
-					found = true
-				} else {
-					filtered = append(filtered, p)
-				}
-			}
-			if !found {
+			q := NewQueue(s.People)
+			if !q.Remove(id) {
 				return domainErr(404, "person not found")
 			}
-			s.People = normalizePositions(filtered)
+			s.People = q.People()
 			result = s
 			return nil
 		})
@@ -356,29 +329,21 @@ func makeHandleSkip(store StateStore) http.HandlerFunc {
 		id := r.PathValue("id")
 		var result *State
 		err := store.Update(func(s *State) error {
-			sorted := normalizePositions(s.People)
-			idx := -1
-			for i, p := range sorted {
-				if p.ID == id {
-					idx = i
-					break
-				}
-			}
-			if idx == -1 {
+			q := NewQueue(s.People)
+			if q.Find(id) == nil {
 				return domainErr(404, "person not found")
 			}
-			if sorted[idx].Position != 0 {
+			cur := q.Current()
+			if cur == nil || cur.ID != id {
 				return domainErr(400, "only the current picker can skip")
 			}
-			if len(sorted) > 1 {
-				sorted[0].Position, sorted[1].Position = sorted[1].Position, sorted[0].Position
-			}
+			q.Skip()
 			s.History = append(s.History, Pick{
 				PersonID: id,
 				PickedAt: time.Now(),
 				Skipped:  true,
 			})
-			s.People = sorted
+			s.People = q.People()
 			result = s
 			return nil
 		})
@@ -404,18 +369,12 @@ func makeHandlePick(store StateStore) http.HandlerFunc {
 		}
 		var result *State
 		err := store.Update(func(s *State) error {
-			sorted := normalizePositions(s.People)
-			idx := -1
-			for i, p := range sorted {
-				if p.ID == id {
-					idx = i
-					break
-				}
-			}
-			if idx == -1 {
+			q := NewQueue(s.People)
+			if q.Find(id) == nil {
 				return domainErr(404, "person not found")
 			}
-			if sorted[idx].Position != 0 {
+			cur := q.Current()
+			if cur == nil || cur.ID != id {
 				return domainErr(400, "only the current picker can pick")
 			}
 			s.PendingPick = &PendingPick{
@@ -423,7 +382,7 @@ func makeHandlePick(store StateStore) http.HandlerFunc {
 				GameName: req.GameName,
 				SetAt:    time.Now(),
 			}
-			s.People = sorted
+			s.People = q.People()
 			result = s
 			return nil
 		})
@@ -446,34 +405,21 @@ func makeHandleDone(store StateStore) http.HandlerFunc {
 			if s.PendingPick == nil || s.PendingPick.PersonID != id {
 				return domainErr(400, "no pending pick for this person")
 			}
-			sorted := normalizePositions(s.People)
-			idx := -1
-			for i, p := range sorted {
-				if p.ID == id {
-					idx = i
-					break
-				}
-			}
-			if idx == -1 {
+			q := NewQueue(s.People)
+			if q.Find(id) == nil {
 				return domainErr(404, "person not found")
 			}
-			if sorted[idx].Position != 0 {
+			cur := q.Current()
+			if cur == nil || cur.ID != id {
 				return domainErr(400, "only the current picker can finalise")
 			}
-			n := len(sorted)
-			for i := range sorted {
-				if sorted[i].ID == id {
-					sorted[i].Position = n - 1
-				} else if sorted[i].Position > 0 {
-					sorted[i].Position--
-				}
-			}
+			q.Rotate()
 			s.History = append(s.History, Pick{
 				PersonID: id,
 				GameName: s.PendingPick.GameName,
 				PickedAt: time.Now(),
 			})
-			s.People = sorted
+			s.People = q.People()
 			s.PendingPick = nil
 			for i := range s.People {
 				s.People[i].Attending = false
@@ -560,16 +506,9 @@ func makeHandleReorder(store StateStore) http.HandlerFunc {
 		}
 		var result *State
 		err := store.Update(func(s *State) error {
-			posMap := map[string]int{}
-			for i, id := range req.IDs {
-				posMap[id] = i
-			}
-			for i := range s.People {
-				if pos, ok := posMap[s.People[i].ID]; ok {
-					s.People[i].Position = pos
-				}
-			}
-			s.People = normalizePositions(s.People)
+			q := NewQueue(s.People)
+			q.Reorder(req.IDs)
+			s.People = q.People()
 			result = s
 			return nil
 		})
