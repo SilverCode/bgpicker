@@ -443,6 +443,63 @@ func TestSetSession(t *testing.T) {
 	})
 }
 
+// ── POST /api/reset ───────────────────────────────────────────────────────────
+
+func TestReset(t *testing.T) {
+	setup := func() *memStore {
+		q := queue("alice", "bob")
+		q.People[0].Attending = true
+		q.People[1].Attending = true
+		store := newMemStore(q)
+		// give alice a pending pick and some history
+		callWithID(makeHandlePick(store), http.MethodPost, "/api/people/alice/pick", "alice", `{"gameName":"Catan"}`)
+		store.s.History = []Pick{{PersonID: "alice", GameName: "Pandemic"}}
+		return store
+	}
+
+	t.Run("clears history", func(t *testing.T) {
+		store := setup()
+		rec := call(makeHandleReset(store), http.MethodPost, "/api/reset", "")
+		if rec.Code != 200 {
+			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
+		}
+		s := mustState(t, rec.Body.Bytes())
+		if len(s.History) != 0 {
+			t.Errorf("want empty history, got %d entries", len(s.History))
+		}
+	})
+
+	t.Run("clears pending pick", func(t *testing.T) {
+		store := setup()
+		rec := call(makeHandleReset(store), http.MethodPost, "/api/reset", "")
+		s := mustState(t, rec.Body.Bytes())
+		if s.PendingPick != nil {
+			t.Errorf("want nil PendingPick, got %+v", s.PendingPick)
+		}
+	})
+
+	t.Run("resets attendance", func(t *testing.T) {
+		store := setup()
+		rec := call(makeHandleReset(store), http.MethodPost, "/api/reset", "")
+		s := mustState(t, rec.Body.Bytes())
+		for _, p := range s.People {
+			if p.Attending {
+				t.Errorf("want attending=false after reset, got true for %s", p.ID)
+			}
+		}
+	})
+
+	t.Run("preserves queue order", func(t *testing.T) {
+		store := setup()
+		rec := call(makeHandleReset(store), http.MethodPost, "/api/reset", "")
+		s := mustState(t, rec.Body.Bytes())
+		pm := posMap(s.People)
+		if pm[0] != "alice" || pm[1] != "bob" {
+			t.Errorf("want [alice bob], got %v", pm)
+		}
+	})
+}
+
 // ── PUT /api/people/reorder ───────────────────────────────────────────────────
 
 func TestReorder(t *testing.T) {

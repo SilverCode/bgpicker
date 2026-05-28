@@ -465,6 +465,28 @@ func makeHandleToggleAttendance(store StateStore) http.HandlerFunc {
 	}
 }
 
+// POST /api/reset — clear history, pending pick, and all attendance flags.
+// Queue order and next-session date are unchanged.
+func makeHandleReset(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var result *State
+		err := store.Update(func(s *State) error {
+			s.History = []Pick{}
+			s.PendingPick = nil
+			for i := range s.People {
+				s.People[i].Attending = false
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 200, result)
+	}
+}
+
 // PUT /api/session  body: {"date": "2026-06-17"}
 func makeHandleSetSession(store StateStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -540,6 +562,7 @@ func buildMux(store StateStore) http.Handler {
 	mux.HandleFunc("POST /api/people/{id}/attend", makeHandleToggleAttendance(store))
 	mux.HandleFunc("PUT /api/people/reorder", makeHandleReorder(store))
 	mux.HandleFunc("PUT /api/session", makeHandleSetSession(store))
+	mux.HandleFunc("POST /api/reset", makeHandleReset(store))
 
 	return corsMiddleware(mux)
 }

@@ -192,6 +192,13 @@
               </button>
             </div>
           </div>
+
+          <div class="reset-section">
+            <button class="btn btn-danger" :disabled="busy" @click="resetData">
+              🗑️ Reset picks &amp; attendance
+            </button>
+            <p class="hint">Clears recent picks, pending game, and attendance. Queue order is kept.</p>
+          </div>
         </section>
 
       </template>
@@ -408,6 +415,21 @@ async function toggleAttendance(id: string) {
   try {
     const s = await apiFetch('POST', `/api/people/${id}/attend`)
     state.value = s
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
+async function resetData() {
+  if (!confirm('Clear recent picks and attendance? Queue order is kept.')) return
+  busy.value = true
+  try {
+    const s = await apiFetch('POST', '/api/reset')
+    state.value = s
+    editing.value = false
+    gameName.value = ''
   } catch (e: any) {
     error.value = e.message
   } finally {
@@ -656,6 +678,13 @@ h1 {
   white-space: nowrap;
 }
 .btn-accent:not(:disabled):hover { background: var(--accent-light); }
+.btn-danger {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  width: 100%;
+}
+.btn-danger:not(:disabled):hover { background: var(--danger); color: #fff; }
 
 /* ── Empty State ─────────────────────────────────────────────────────────── */
 .empty-state {
@@ -830,6 +859,9 @@ h1 {
 .count-num { font-size: 1.1rem; font-weight: 800; color: var(--success); }
 .count-denom { font-size: 0.85rem; color: var(--text-muted); }
 .count-label { font-size: 0.75rem; color: var(--text-muted); margin-left: 0.2rem; }
+
+/* ── Reset section (manage panel) ───────────────────────────────────────── */
+.reset-section { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.4rem; }
 
 /* ── Session date editor (manage panel) ──────────────────────────────────── */
 .session-edit { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
