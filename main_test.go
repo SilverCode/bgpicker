@@ -283,7 +283,7 @@ func TestDone(t *testing.T) {
 		store := newMemStore(q)
 		callWithID(makeHandlePick(store), http.MethodPost, "/api/people/alice/pick", "alice", `{"gameName":"Catan"}`)
 		for i := range store.s.People {
-			store.s.People[i].Attending = true
+			store.s.People[i].Attending = AttendanceYes
 		}
 		return store
 	}
@@ -336,8 +336,8 @@ func TestDone(t *testing.T) {
 		rec := callWithID(makeHandleDone(store), http.MethodPost, "/api/people/alice/done", "alice", "")
 		s := mustState(t, rec.Body.Bytes())
 		for _, p := range s.People {
-			if p.Attending {
-				t.Errorf("want attending=false after done, got true for %s", p.ID)
+			if p.Attending != AttendanceUnknown {
+				t.Errorf("want attending=unknown after done, got %q for %s", p.Attending, p.ID)
 			}
 		}
 	})
@@ -373,29 +373,37 @@ func TestDone(t *testing.T) {
 // ── POST /api/people/{id}/attend ──────────────────────────────────────────────
 
 func TestToggleAttendance(t *testing.T) {
-	t.Run("false → true", func(t *testing.T) {
+	t.Run("unknown → yes", func(t *testing.T) {
 		store := newMemStore(queue("alice"))
 		rec := callWithID(makeHandleToggleAttendance(store), http.MethodPost, "/api/people/alice/attend", "alice", "")
 		if rec.Code != 200 {
 			t.Fatalf("want 200, got %d", rec.Code)
 		}
 		s := mustState(t, rec.Body.Bytes())
-		if !s.People[0].Attending {
-			t.Error("want attending=true")
+		if s.People[0].Attending != AttendanceYes {
+			t.Errorf("want yes, got %q", s.People[0].Attending)
 		}
 	})
 
-	t.Run("true → false", func(t *testing.T) {
+	t.Run("yes → no", func(t *testing.T) {
 		q := queue("alice")
-		q.People[0].Attending = true
+		q.People[0].Attending = AttendanceYes
 		store := newMemStore(q)
 		rec := callWithID(makeHandleToggleAttendance(store), http.MethodPost, "/api/people/alice/attend", "alice", "")
-		if rec.Code != 200 {
-			t.Fatalf("want 200, got %d", rec.Code)
-		}
 		s := mustState(t, rec.Body.Bytes())
-		if s.People[0].Attending {
-			t.Error("want attending=false")
+		if s.People[0].Attending != AttendanceNo {
+			t.Errorf("want no, got %q", s.People[0].Attending)
+		}
+	})
+
+	t.Run("no → unknown", func(t *testing.T) {
+		q := queue("alice")
+		q.People[0].Attending = AttendanceNo
+		store := newMemStore(q)
+		rec := callWithID(makeHandleToggleAttendance(store), http.MethodPost, "/api/people/alice/attend", "alice", "")
+		s := mustState(t, rec.Body.Bytes())
+		if s.People[0].Attending != AttendanceUnknown {
+			t.Errorf("want unknown, got %q", s.People[0].Attending)
 		}
 	})
 
@@ -448,8 +456,8 @@ func TestSetSession(t *testing.T) {
 func TestReset(t *testing.T) {
 	setup := func() *memStore {
 		q := queue("alice", "bob")
-		q.People[0].Attending = true
-		q.People[1].Attending = true
+		q.People[0].Attending = AttendanceYes
+		q.People[1].Attending = AttendanceNo
 		store := newMemStore(q)
 		// give alice a pending pick and some history
 		callWithID(makeHandlePick(store), http.MethodPost, "/api/people/alice/pick", "alice", `{"gameName":"Catan"}`)
@@ -478,13 +486,13 @@ func TestReset(t *testing.T) {
 		}
 	})
 
-	t.Run("resets attendance", func(t *testing.T) {
+	t.Run("resets attendance to unknown", func(t *testing.T) {
 		store := setup()
 		rec := call(makeHandleReset(store), http.MethodPost, "/api/reset", "")
 		s := mustState(t, rec.Body.Bytes())
 		for _, p := range s.People {
-			if p.Attending {
-				t.Errorf("want attending=false after reset, got true for %s", p.ID)
+			if p.Attending != AttendanceUnknown {
+				t.Errorf("want attending=unknown after reset, got %q for %s", p.Attending, p.ID)
 			}
 		}
 	})

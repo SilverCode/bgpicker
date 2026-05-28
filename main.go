@@ -27,11 +27,57 @@ var staticFiles embed.FS
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
+// AttendanceState is the three-way attendance signal for a Person.
+type AttendanceState string
+
+const (
+	AttendanceUnknown AttendanceState = ""    // not yet signalled
+	AttendanceYes     AttendanceState = "yes" // definitely going
+	AttendanceNo      AttendanceState = "no"  // definitely not going
+)
+
 type Person struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Position  int    `json:"position"`
-	Attending bool   `json:"attending"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Position  int             `json:"position"`
+	Attending AttendanceState `json:"attending"`
+}
+
+// UnmarshalJSON handles both the current string format and the legacy boolean
+// format so that existing data.json files continue to load correctly.
+func (p *Person) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Position  int             `json:"position"`
+		Attending json.RawMessage `json:"attending"`
+	}
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	p.ID, p.Name, p.Position = w.ID, w.Name, w.Position
+	if w.Attending == nil {
+		p.Attending = AttendanceUnknown
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(w.Attending, &s); err == nil {
+		p.Attending = AttendanceState(s)
+		return nil
+	}
+	// Legacy boolean: true → yes, false → unknown
+	var b bool
+	if err := json.Unmarshal(w.Attending, &b); err == nil {
+		if b {
+			p.Attending = AttendanceYes
+		} else {
+			p.Attending = AttendanceUnknown
+		}
+		return nil
+	}
+	p.Attending = AttendanceUnknown
+	return nil
 }
 
 type Pick struct {
@@ -422,7 +468,7 @@ func makeHandleDone(store StateStore) http.HandlerFunc {
 			s.People = q.People()
 			s.PendingPick = nil
 			for i := range s.People {
-				s.People[i].Attending = false
+				s.People[i].Attending = AttendanceUnknown
 			}
 			next := advanceSession(*s.NextSession)
 			s.NextSession = &next
@@ -437,7 +483,7 @@ func makeHandleDone(store StateStore) http.HandlerFunc {
 	}
 }
 
-// POST /api/people/{id}/attend — toggle attendance for a person
+// POST /api/people/{id}/attend — cycle attendance: unknown → yes → no → unknown
 func makeHandleToggleAttendance(store StateStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -446,7 +492,14 @@ func makeHandleToggleAttendance(store StateStore) http.HandlerFunc {
 			found := false
 			for i := range s.People {
 				if s.People[i].ID == id {
-					s.People[i].Attending = !s.People[i].Attending
+					switch s.People[i].Attending {
+					case AttendanceUnknown:
+						s.People[i].Attending = AttendanceYes
+					case AttendanceYes:
+						s.People[i].Attending = AttendanceNo
+					case AttendanceNo:
+						s.People[i].Attending = AttendanceUnknown
+					}
 					found = true
 					break
 				}
@@ -474,7 +527,7 @@ func makeHandleReset(store StateStore) http.HandlerFunc {
 			s.History = []Pick{}
 			s.PendingPick = nil
 			for i := range s.People {
-				s.People[i].Attending = false
+				s.People[i].Attending = AttendanceUnknown
 			}
 			result = s
 			return nil

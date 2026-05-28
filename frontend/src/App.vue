@@ -134,10 +134,10 @@
                 <div class="queue-name">{{ person.name }}</div>
                 <button
                   class="btn-attend"
-                  :class="{ 'btn-attend--yes': person.attending }"
+                  :class="{ 'btn-attend--yes': person.attending === 'yes', 'btn-attend--no': person.attending === 'no' }"
                   @click="toggleAttendance(person.id)"
-                  :title="person.attending ? 'Mark as not going' : 'Mark as going'"
-                >{{ person.attending ? '✓ Going' : 'Going?' }}</button>
+                  :title="person.attending === 'yes' ? 'Going — click to mark as not going' : person.attending === 'no' ? 'Not going — click to clear' : 'Click to mark as going'"
+                >{{ person.attending === 'yes' ? '✓ Going' : person.attending === 'no' ? '✗ Not going' : 'Going?' }}</button>
                 <button
                   v-if="showManage"
                   class="btn-remove"
@@ -214,7 +214,7 @@ interface Person {
   id: string
   name: string
   position: number
-  attending: boolean
+  attending: '' | 'yes' | 'no'
 }
 
 interface Pick {
@@ -276,7 +276,7 @@ const recentHistory = computed<Pick[]>(() => {
 })
 
 const attendingCount = computed(() =>
-  sortedPeople.value.filter(p => p.attending).length
+  sortedPeople.value.filter(p => p.attending === 'yes').length
 )
 
 // Keep sessionDateInput in sync with server state
@@ -762,6 +762,12 @@ h1 {
   border-color: var(--success);
   color: var(--success);
 }
+.btn-attend--no {
+  background: var(--danger-dim);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-attend--no:hover { border-color: var(--danger); color: var(--danger); }
 
 /* Drag handle */
 .drag-handle {
