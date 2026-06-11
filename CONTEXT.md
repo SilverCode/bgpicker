@@ -35,6 +35,13 @@ upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
 Each tap cycles unknown → yes → no → unknown. Independent of queue actions.
 Reset to unknown on Done and on Reset.
 
+**Session (backend module)** — the night lifecycle as behaviour on `State`
+(`session.go`): `SetPendingPick`, `SkipTurn`, `FinishNight`, `CycleAttendance`,
+`Reset`, plus the session-date functions (14 days, snapped to Tuesday). Each
+handler calls exactly one Session method inside `store.Update` and does no
+domain work itself. Methods take `now` explicitly and assume a normalised
+State; errors are `domainErr` values (caller fault vs system fault).
+
 **Game night (frontend module)** — the evening as the client sees it: queue,
 attendance, pending pick, history, next session. The `useGameNight()`
 composable (`frontend/src/composables/useGameNight.ts`) owns all client↔server

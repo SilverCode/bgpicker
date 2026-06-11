@@ -272,18 +272,6 @@ func (ss *s3Store) Update(fn func(*State) error) error {
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
-// nextUpcomingTuesdayFrom returns the next Tuesday on or after t (midnight local).
-func nextUpcomingTuesdayFrom(t time.Time) time.Time {
-	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	daysUntil := (int(time.Tuesday) - int(t.Weekday()) + 7) % 7
-	return t.AddDate(0, 0, daysUntil)
-}
-
-// advanceSession returns the session date 14 days after base, snapped to Tuesday.
-func advanceSession(base time.Time) time.Time {
-	return nextUpcomingTuesdayFrom(base.AddDate(0, 0, 14))
-}
-
 func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
@@ -375,21 +363,9 @@ func makeHandleSkip(store StateStore) http.HandlerFunc {
 		id := r.PathValue("id")
 		var result *State
 		err := store.Update(func(s *State) error {
-			q := NewQueue(s.People)
-			if q.Find(id) == nil {
-				return domainErr(404, "person not found")
+			if err := s.SkipTurn(id, time.Now()); err != nil {
+				return err
 			}
-			cur := q.Current()
-			if cur == nil || cur.ID != id {
-				return domainErr(400, "only the current picker can skip")
-			}
-			q.Skip()
-			s.History = append(s.History, Pick{
-				PersonID: id,
-				PickedAt: time.Now(),
-				Skipped:  true,
-			})
-			s.People = q.People()
 			result = s
 			return nil
 		})
@@ -415,20 +391,9 @@ func makeHandlePick(store StateStore) http.HandlerFunc {
 		}
 		var result *State
 		err := store.Update(func(s *State) error {
-			q := NewQueue(s.People)
-			if q.Find(id) == nil {
-				return domainErr(404, "person not found")
+			if err := s.SetPendingPick(id, req.GameName, time.Now()); err != nil {
+				return err
 			}
-			cur := q.Current()
-			if cur == nil || cur.ID != id {
-				return domainErr(400, "only the current picker can pick")
-			}
-			s.PendingPick = &PendingPick{
-				PersonID: id,
-				GameName: req.GameName,
-				SetAt:    time.Now(),
-			}
-			s.People = q.People()
 			result = s
 			return nil
 		})
@@ -448,30 +413,9 @@ func makeHandleDone(store StateStore) http.HandlerFunc {
 		id := r.PathValue("id")
 		var result *State
 		err := store.Update(func(s *State) error {
-			if s.PendingPick == nil || s.PendingPick.PersonID != id {
-				return domainErr(400, "no pending pick for this person")
+			if err := s.FinishNight(id, time.Now()); err != nil {
+				return err
 			}
-			q := NewQueue(s.People)
-			if q.Find(id) == nil {
-				return domainErr(404, "person not found")
-			}
-			cur := q.Current()
-			if cur == nil || cur.ID != id {
-				return domainErr(400, "only the current picker can finalise")
-			}
-			q.Rotate()
-			s.History = append(s.History, Pick{
-				PersonID: id,
-				GameName: s.PendingPick.GameName,
-				PickedAt: time.Now(),
-			})
-			s.People = q.People()
-			s.PendingPick = nil
-			for i := range s.People {
-				s.People[i].Attending = AttendanceUnknown
-			}
-			next := advanceSession(*s.NextSession)
-			s.NextSession = &next
 			result = s
 			return nil
 		})
@@ -489,23 +433,8 @@ func makeHandleToggleAttendance(store StateStore) http.HandlerFunc {
 		id := r.PathValue("id")
 		var result *State
 		err := store.Update(func(s *State) error {
-			found := false
-			for i := range s.People {
-				if s.People[i].ID == id {
-					switch s.People[i].Attending {
-					case AttendanceUnknown:
-						s.People[i].Attending = AttendanceYes
-					case AttendanceYes:
-						s.People[i].Attending = AttendanceNo
-					case AttendanceNo:
-						s.People[i].Attending = AttendanceUnknown
-					}
-					found = true
-					break
-				}
-			}
-			if !found {
-				return domainErr(404, "person not found")
+			if err := s.CycleAttendance(id); err != nil {
+				return err
 			}
 			result = s
 			return nil
@@ -524,11 +453,7 @@ func makeHandleReset(store StateStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var result *State
 		err := store.Update(func(s *State) error {
-			s.History = []Pick{}
-			s.PendingPick = nil
-			for i := range s.People {
-				s.People[i].Attending = AttendanceUnknown
-			}
+			s.Reset()
 			result = s
 			return nil
 		})
