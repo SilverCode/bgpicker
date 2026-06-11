@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 )
 
@@ -152,18 +153,28 @@ func normalizeState(s *State) {
 	}
 }
 
-// ── fileStore — local file adapter ───────────────────────────────────────────
+// ── blobStore — StateStore over a byte-level blob seam ───────────────────────
 
-type fileStore struct {
-	mu   sync.RWMutex
-	path string
+// blob is the persistence seam: one durable byte slice. Read returns
+// (nil, nil) when no data exists yet (fresh start); any other error must
+// propagate so it aborts the caller's operation instead of being mistaken
+// for an empty state.
+type blob interface {
+	Read() ([]byte, error)
+	Write([]byte) error
 }
 
-func (f *fileStore) load() (*State, error) {
-	data, err := os.ReadFile(f.path)
-	if os.IsNotExist(err) {
-		data, err = nil, nil
-	}
+// blobStore implements StateStore over any blob. It owns locking, JSON
+// encoding, and state normalisation; blob adapters do pure byte I/O.
+type blobStore struct {
+	mu sync.RWMutex
+	b  blob
+}
+
+func newBlobStore(b blob) *blobStore { return &blobStore{b: b} }
+
+func (bs *blobStore) load() (*State, error) {
+	data, err := bs.b.Read()
 	if err != nil {
 		return nil, err
 	}
@@ -177,97 +188,86 @@ func (f *fileStore) load() (*State, error) {
 	return s, nil
 }
 
-func (f *fileStore) save(s *State) error {
+func (bs *blobStore) save(s *State) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(f.path, data, 0644)
+	return bs.b.Write(data)
 }
 
-func (f *fileStore) Get() (*State, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.load()
+func (bs *blobStore) Get() (*State, error) {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	return bs.load()
 }
 
-func (f *fileStore) Update(fn func(*State) error) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	s, err := f.load()
+func (bs *blobStore) Update(fn func(*State) error) error {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	s, err := bs.load()
 	if err != nil {
 		return err
 	}
 	if err := fn(s); err != nil {
 		return err
 	}
-	return f.save(s)
+	return bs.save(s)
 }
 
-// ── s3Store — AWS S3 adapter ──────────────────────────────────────────────────
+// ── fileBlob — local file adapter ─────────────────────────────────────────────
 
-type s3Store struct {
-	mu     sync.RWMutex
+type fileBlob struct {
+	path string
+}
+
+func (f *fileBlob) Read() ([]byte, error) {
+	data, err := os.ReadFile(f.path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return data, err
+}
+
+func (f *fileBlob) Write(data []byte) error {
+	return os.WriteFile(f.path, data, 0644)
+}
+
+// ── s3Blob — AWS S3 adapter ───────────────────────────────────────────────────
+
+type s3Blob struct {
 	client *s3.Client
 	bucket string
 	key    string
 }
 
-func (ss *s3Store) load() (*State, error) {
-	out, err := ss.client.GetObject(context.Background(), &s3.GetObjectInput{
-		Bucket: aws.String(ss.bucket),
-		Key:    aws.String(ss.key),
+func (sb *s3Blob) Read() ([]byte, error) {
+	out, err := sb.client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(sb.bucket),
+		Key:    aws.String(sb.key),
 	})
-	var data []byte
-	if err == nil {
-		defer out.Body.Close()
-		data, err = io.ReadAll(out.Body)
-		if err != nil {
-			return nil, err
-		}
+	// Only a genuinely-missing object is a fresh start. Any other error
+	// (auth, network, throttling) must abort the operation — treating it as
+	// empty would let an Update overwrite real data with a fresh state.
+	var noKey *types.NoSuchKey
+	if errors.As(err, &noKey) {
+		return nil, nil
 	}
-	// Any GetObject error (including NoSuchKey) → start with empty state.
-	s := &State{}
-	if data != nil {
-		if err := json.Unmarshal(data, s); err != nil {
-			return nil, err
-		}
+	if err != nil {
+		return nil, err
 	}
-	normalizeState(s)
-	return s, nil
+	defer out.Body.Close()
+	return io.ReadAll(out.Body)
 }
 
-func (ss *s3Store) save(s *State) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = ss.client.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket:      aws.String(ss.bucket),
-		Key:         aws.String(ss.key),
+func (sb *s3Blob) Write(data []byte) error {
+	_, err := sb.client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(sb.bucket),
+		Key:         aws.String(sb.key),
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String("application/json"),
 	})
 	return err
-}
-
-func (ss *s3Store) Get() (*State, error) {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	return ss.load()
-}
-
-func (ss *s3Store) Update(fn func(*State) error) error {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	s, err := ss.load()
-	if err != nil {
-		return err
-	}
-	if err := fn(s); err != nil {
-		return err
-	}
-	return ss.save(s)
 }
 
 // ── Utility functions ─────────────────────────────────────────────────────────
@@ -551,17 +551,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to load AWS config: %v", err)
 		}
-		store := &s3Store{
+		bucket := os.Getenv("STATE_BUCKET")
+		store := newBlobStore(&s3Blob{
 			client: s3.NewFromConfig(cfg),
-			bucket: os.Getenv("STATE_BUCKET"),
+			bucket: bucket,
 			key:    "data.json",
-		}
-		log.Printf("bgpicker starting in Lambda mode (bucket: %s)", store.bucket)
+		})
+		log.Printf("bgpicker starting in Lambda mode (bucket: %s)", bucket)
 		lambda.Start(httpadapter.NewV2(buildMux(store)).ProxyWithContext)
 		return
 	}
 
-	store := &fileStore{path: "data.json"}
+	store := newBlobStore(&fileBlob{path: "data.json"})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

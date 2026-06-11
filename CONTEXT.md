@@ -53,11 +53,18 @@ it. `App.vue` is presentation only.
 
 ## State persistence
 
-- **Local / EC2**: `data.json` in the working directory, protected by a
-  `sync.RWMutex`.
-- **Lambda**: an S3 object (`data.json`) in a private bucket specified by the
-  `STATE_BUCKET` environment variable. Same mutex guards in-process concurrency;
-  S3 is the durable store.
+One `blobStore` implements the `StateStore` interface (Get/Update) and owns
+locking, JSON encoding, and state normalisation. Behind it, the `blob` seam
+(`Read() ([]byte, error)` / `Write([]byte) error`) does pure byte I/O:
+
+- **Local / EC2**: `fileBlob` — `data.json` in the working directory.
+- **Lambda**: `s3Blob` — an S3 object (`data.json`) in a private bucket named
+  by the `STATE_BUCKET` environment variable.
+
+Convention at the blob seam: `Read` returns `(nil, nil)` only for
+genuinely-absent data (no file / S3 `NoSuchKey`) — a fresh start. Every other
+error propagates and aborts the operation; treating a transient failure as an
+empty state would let an Update overwrite real data.
 
 ## Tech stack
 
