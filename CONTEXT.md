@@ -30,8 +30,19 @@ date by 14 days (snapped to the nearest Tuesday).
 **Next session** — a date stored on the state object. Defaults to the next
 upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
 
-**Attendance** — a boolean per person indicating whether they plan to attend the
-next session. Toggled independently of queue actions. Reset to false on Done.
+**Attendance** — a three-state flag per person for the next session: *unknown*
+(hasn't signalled), *yes* (definitely going), *no* (definitely not going).
+Each tap cycles unknown → yes → no → unknown. Independent of queue actions.
+Reset to unknown on Done and on Reset.
+
+**Game night (frontend module)** — the evening as the client sees it: queue,
+attendance, pending pick, history, next session. The `useGameNight()`
+composable (`frontend/src/composables/useGameNight.ts`) owns all client↔server
+coordination — polling, the edit-vs-poll overlay, drag sync with rollback, and
+busy/error plumbing — behind a fetcher seam injected at construction.
+Invariant: the composable's `state` always mirrors the last server response;
+local editing overlays it (via the `pendingPick` computed) and never mutates
+it. `App.vue` is presentation only.
 
 ## State persistence
 
