@@ -37,6 +37,23 @@ const (
 	AttendanceNo      AttendanceState = "no"  // definitely not going
 )
 
+// VoteDirection is the direction of a vote on a Suggestion.
+type VoteDirection string
+
+const (
+	VoteNone VoteDirection = ""     // no vote / retracted
+	VoteUp   VoteDirection = "up"   // thumbs up
+	VoteDown VoteDirection = "down" // thumbs down
+)
+
+type Suggestion struct {
+	ID          string                  `json:"id"`
+	GameName    string                  `json:"gameName"`
+	SuggestedBy string                  `json:"suggestedBy"`
+	SuggestedAt time.Time               `json:"suggestedAt"`
+	Votes       map[string]VoteDirection `json:"votes"`
+}
+
 type Person struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
@@ -101,6 +118,7 @@ type State struct {
 	History     []Pick       `json:"history"`
 	PendingPick *PendingPick `json:"pendingPick,omitempty"`
 	NextSession *time.Time   `json:"nextSession,omitempty"`
+	Suggestions []Suggestion `json:"suggestions"`
 }
 
 // ── StateStore — the seam between handlers and persistence ───────────────────
@@ -150,6 +168,14 @@ func normalizeState(s *State) {
 	if s.NextSession == nil {
 		next := nextUpcomingTuesdayFrom(time.Now())
 		s.NextSession = &next
+	}
+	if s.Suggestions == nil {
+		s.Suggestions = []Suggestion{}
+	}
+	for i := range s.Suggestions {
+		if s.Suggestions[i].Votes == nil {
+			s.Suggestions[i].Votes = map[string]VoteDirection{}
+		}
 	}
 }
 
@@ -520,6 +546,81 @@ func makeHandleReorder(store StateStore) http.HandlerFunc {
 	}
 }
 
+// POST /api/suggestions  body: {"gameName": string, "personId": string}
+func makeHandleAddSuggestion(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			GameName string `json:"gameName"`
+			PersonID string `json:"personId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.GameName == "" || req.PersonID == "" {
+			jsonResponse(w, 400, map[string]string{"error": "gameName and personId required"})
+			return
+		}
+		var result *State
+		err := store.Update(func(s *State) error {
+			if err := s.AddSuggestion(req.PersonID, req.GameName, time.Now()); err != nil {
+				return err
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 201, result)
+	}
+}
+
+// DELETE /api/suggestions/{id}
+func makeHandleDeleteSuggestion(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var result *State
+		err := store.Update(func(s *State) error {
+			if err := s.RemoveSuggestion(id); err != nil {
+				return err
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 200, result)
+	}
+}
+
+// POST /api/suggestions/{id}/vote  body: {"personId": string, "direction": "up"|"down"|""}
+func makeHandleVote(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			PersonID  string        `json:"personId"`
+			Direction VoteDirection `json:"direction"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PersonID == "" {
+			jsonResponse(w, 400, map[string]string{"error": "personId required"})
+			return
+		}
+		var result *State
+		err := store.Update(func(s *State) error {
+			if err := s.VoteOnSuggestion(id, req.PersonID, req.Direction); err != nil {
+				return err
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 200, result)
+	}
+}
+
 // ── Wiring ────────────────────────────────────────────────────────────────────
 
 func buildMux(store StateStore) http.Handler {
@@ -541,6 +642,9 @@ func buildMux(store StateStore) http.Handler {
 	mux.HandleFunc("PUT /api/people/reorder", makeHandleReorder(store))
 	mux.HandleFunc("PUT /api/session", makeHandleSetSession(store))
 	mux.HandleFunc("POST /api/reset", makeHandleReset(store))
+	mux.HandleFunc("POST /api/suggestions", makeHandleAddSuggestion(store))
+	mux.HandleFunc("DELETE /api/suggestions/{id}", makeHandleDeleteSuggestion(store))
+	mux.HandleFunc("POST /api/suggestions/{id}/vote", makeHandleVote(store))
 
 	return corsMiddleware(mux)
 }

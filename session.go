@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ── Session — the night lifecycle as behaviour on State ──────────────────────
 //
@@ -63,7 +66,8 @@ func (s *State) SkipTurn(id string, now time.Time) error {
 }
 
 // FinishNight finalises the pending pick: records it in history, rotates the
-// queue, resets all attendance to unknown, and advances the next-session date.
+// queue, resets all attendance to unknown, advances the next-session date, and
+// auto-removes any suggestion whose game name matches the picked game.
 func (s *State) FinishNight(id string, now time.Time) error {
 	if s.PendingPick == nil || s.PendingPick.PersonID != id {
 		return domainErr(400, "no pending pick for this person")
@@ -72,6 +76,7 @@ func (s *State) FinishNight(id string, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	pickedLower := strings.ToLower(s.PendingPick.GameName)
 	q.Rotate()
 	s.History = append(s.History, Pick{
 		PersonID: id,
@@ -85,6 +90,16 @@ func (s *State) FinishNight(id string, now time.Time) error {
 	}
 	next := advanceSession(*s.NextSession)
 	s.NextSession = &next
+	if len(s.Suggestions) > 0 {
+		n := 0
+		for _, sg := range s.Suggestions {
+			if strings.ToLower(sg.GameName) != pickedLower {
+				s.Suggestions[n] = sg
+				n++
+			}
+		}
+		s.Suggestions = s.Suggestions[:n]
+	}
 	return nil
 }
 
@@ -106,14 +121,76 @@ func (s *State) CycleAttendance(id string) error {
 	return domainErr(404, "person not found")
 }
 
-// Reset clears history, the pending pick, and all attendance flags.
-// Queue order and the next-session date are unchanged.
+// Reset clears history, the pending pick, all attendance flags, and all
+// suggestions. Queue order and the next-session date are unchanged.
 func (s *State) Reset() {
 	s.History = []Pick{}
 	s.PendingPick = nil
+	s.Suggestions = []Suggestion{}
 	for i := range s.People {
 		s.People[i].Attending = AttendanceUnknown
 	}
+}
+
+// ── Suggestions ───────────────────────────────────────────────────────────────
+
+// AddSuggestion proposes a game for a future night. Returns 404 if personID is
+// unknown and 409 if the game is already in the list (case-insensitive).
+func (s *State) AddSuggestion(personID, gameName string, now time.Time) error {
+	found := false
+	for _, p := range s.People {
+		if p.ID == personID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return domainErr(404, "person not found")
+	}
+	lower := strings.ToLower(strings.TrimSpace(gameName))
+	for _, sg := range s.Suggestions {
+		if strings.ToLower(sg.GameName) == lower {
+			return domainErr(409, "game already in suggestions list")
+		}
+	}
+	s.Suggestions = append(s.Suggestions, Suggestion{
+		ID:          generateID(),
+		GameName:    strings.TrimSpace(gameName),
+		SuggestedBy: personID,
+		SuggestedAt: now,
+		Votes:       map[string]VoteDirection{},
+	})
+	return nil
+}
+
+// RemoveSuggestion removes a suggestion by ID. Anyone can remove any suggestion.
+func (s *State) RemoveSuggestion(id string) error {
+	for i, sg := range s.Suggestions {
+		if sg.ID == id {
+			s.Suggestions = append(s.Suggestions[:i], s.Suggestions[i+1:]...)
+			return nil
+		}
+	}
+	return domainErr(404, "suggestion not found")
+}
+
+// VoteOnSuggestion records or retracts a person's vote on a suggestion.
+// direction VoteNone retracts any existing vote.
+func (s *State) VoteOnSuggestion(id, personID string, dir VoteDirection) error {
+	for i := range s.Suggestions {
+		if s.Suggestions[i].ID == id {
+			if s.Suggestions[i].Votes == nil {
+				s.Suggestions[i].Votes = map[string]VoteDirection{}
+			}
+			if dir == VoteNone {
+				delete(s.Suggestions[i].Votes, personID)
+			} else {
+				s.Suggestions[i].Votes[personID] = dir
+			}
+			return nil
+		}
+	}
+	return domainErr(404, "suggestion not found")
 }
 
 // ── Session dates ─────────────────────────────────────────────────────────────

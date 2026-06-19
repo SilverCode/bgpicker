@@ -24,8 +24,25 @@ the front.
 yet. The picker can edit the pending pick freely until they press "Done".
 
 **Done / end of night** — finalises the pending pick: records it in history,
-rotates the queue, resets all attendance flags, and advances the next-session
-date by 14 days (snapped to the nearest Tuesday).
+rotates the queue, resets all attendance flags, advances the next-session
+date by 14 days (snapped to the nearest Tuesday), and removes any Suggestion
+whose game name matches the picked game (case-insensitive).
+
+**Suggestion** — a game proposed by any person for consideration at a future
+game night. Has a unique game name (case-insensitive across the list), the ID
+of the person who suggested it, and a map of votes keyed by person ID. Stays
+in the list until explicitly removed by any person, automatically removed when
+the picked game matches on Done, or cleared entirely on Reset. If the suggester
+is later removed from the queue the suggestion remains, attributed to an unknown
+person.
+
+**Vote** — a person's signal on a Suggestion: *up*, *down*, or *none* (no
+vote). Each person has at most one vote per suggestion. Clicking a lit button
+retracts it (returns to none); clicking the opposite button switches sides.
+Votes from removed people are not audited — they remain in the tally.
+
+**Suggestions list** — all current Suggestions ordered by net score (up count
+minus down count) descending, ties broken by suggestion age (oldest first).
 
 **Next session** — a date stored on the state object. Defaults to the next
 upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
@@ -33,7 +50,7 @@ upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
 **Attendance** — a three-state flag per person for the next session: *unknown*
 (hasn't signalled), *yes* (definitely going), *no* (definitely not going).
 Each tap cycles unknown → yes → no → unknown. Independent of queue actions.
-Reset to unknown on Done and on Reset.
+Reset to unknown on Done and on Reset. Reset also clears the Suggestions list.
 
 **Session (backend module)** — the night lifecycle as behaviour on `State`
 (`session.go`): `SetPendingPick`, `SkipTurn`, `FinishNight`, `CycleAttendance`,

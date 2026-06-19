@@ -198,6 +198,33 @@ func TestFinishNight(t *testing.T) {
 		wantDomainErr(t, s.FinishNight("bob", now), 400)
 	})
 
+	t.Run("auto-removes matching suggestion", func(t *testing.T) {
+		s := setup()
+		s.Suggestions = []Suggestion{
+			{ID: "s1", GameName: "Catan", SuggestedBy: "bob", Votes: map[string]VoteDirection{}},
+			{ID: "s2", GameName: "Wingspan", SuggestedBy: "bob", Votes: map[string]VoteDirection{}},
+		}
+		if err := s.FinishNight("alice", now); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Suggestions) != 1 || s.Suggestions[0].ID != "s2" {
+			t.Errorf("want only Wingspan remaining, got %+v", s.Suggestions)
+		}
+	})
+
+	t.Run("auto-removal is case-insensitive", func(t *testing.T) {
+		s := setup()
+		s.Suggestions = []Suggestion{
+			{ID: "s1", GameName: "catan", SuggestedBy: "bob", Votes: map[string]VoteDirection{}},
+		}
+		if err := s.FinishNight("alice", now); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Suggestions) != 0 {
+			t.Errorf("want empty suggestions after match, got %+v", s.Suggestions)
+		}
+	})
+
 	t.Run("failure leaves state untouched", func(t *testing.T) {
 		s := setup()
 		_ = s.FinishNight("bob", now)
@@ -239,11 +266,15 @@ func TestSessionReset(t *testing.T) {
 	s.PendingPick = &PendingPick{PersonID: "alice", GameName: "Catan"}
 	s.People[0].Attending = AttendanceYes
 	s.People[1].Attending = AttendanceNo
+	s.Suggestions = []Suggestion{{ID: "s1", GameName: "Pandemic", SuggestedBy: "bob", Votes: map[string]VoteDirection{}}}
 
 	s.Reset()
 
 	if len(s.History) != 0 || s.PendingPick != nil {
 		t.Error("history and pending pick must be cleared")
+	}
+	if len(s.Suggestions) != 0 {
+		t.Error("suggestions must be cleared")
 	}
 	for _, p := range s.People {
 		if p.Attending != AttendanceUnknown {
@@ -257,4 +288,137 @@ func TestSessionReset(t *testing.T) {
 	if !s.NextSession.Equal(sess) {
 		t.Error("next-session date must be unchanged")
 	}
+}
+
+// ── AddSuggestion ─────────────────────────────────────────────────────────────
+
+func TestAddSuggestion(t *testing.T) {
+	now := date(2026, 6, 11)
+
+	t.Run("adds a suggestion", func(t *testing.T) {
+		s := queue("alice", "bob")
+		if err := s.AddSuggestion("alice", "Wingspan", now); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Suggestions) != 1 {
+			t.Fatalf("want 1 suggestion, got %d", len(s.Suggestions))
+		}
+		sg := s.Suggestions[0]
+		if sg.GameName != "Wingspan" || sg.SuggestedBy != "alice" {
+			t.Errorf("unexpected suggestion: %+v", sg)
+		}
+		if sg.ID == "" {
+			t.Error("want non-empty ID")
+		}
+		if !sg.SuggestedAt.Equal(now) {
+			t.Errorf("want SuggestedAt %v, got %v", now, sg.SuggestedAt)
+		}
+	})
+
+	t.Run("trims whitespace from game name", func(t *testing.T) {
+		s := queue("alice")
+		if err := s.AddSuggestion("alice", "  Catan  ", now); err != nil {
+			t.Fatal(err)
+		}
+		if s.Suggestions[0].GameName != "Catan" {
+			t.Errorf("want trimmed name, got %q", s.Suggestions[0].GameName)
+		}
+	})
+
+	t.Run("duplicate game name is 409", func(t *testing.T) {
+		s := queue("alice", "bob")
+		_ = s.AddSuggestion("alice", "Wingspan", now)
+		wantDomainErr(t, s.AddSuggestion("bob", "Wingspan", now), 409)
+	})
+
+	t.Run("duplicate check is case-insensitive", func(t *testing.T) {
+		s := queue("alice", "bob")
+		_ = s.AddSuggestion("alice", "wingspan", now)
+		wantDomainErr(t, s.AddSuggestion("bob", "WINGSPAN", now), 409)
+	})
+
+	t.Run("unknown person is 404", func(t *testing.T) {
+		s := queue("alice")
+		wantDomainErr(t, s.AddSuggestion("nobody", "Catan", now), 404)
+	})
+}
+
+// ── RemoveSuggestion ──────────────────────────────────────────────────────────
+
+func TestRemoveSuggestion(t *testing.T) {
+	now := date(2026, 6, 11)
+
+	t.Run("removes the suggestion by ID", func(t *testing.T) {
+		s := queue("alice")
+		_ = s.AddSuggestion("alice", "Wingspan", now)
+		id := s.Suggestions[0].ID
+		if err := s.RemoveSuggestion(id); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.Suggestions) != 0 {
+			t.Error("want empty suggestions after removal")
+		}
+	})
+
+	t.Run("unknown ID is 404", func(t *testing.T) {
+		s := queue("alice")
+		wantDomainErr(t, s.RemoveSuggestion("nope"), 404)
+	})
+}
+
+// ── VoteOnSuggestion ──────────────────────────────────────────────────────────
+
+func TestVoteOnSuggestion(t *testing.T) {
+	now := date(2026, 6, 11)
+
+	setup := func() (State, string) {
+		s := queue("alice", "bob")
+		_ = s.AddSuggestion("alice", "Wingspan", now)
+		return s, s.Suggestions[0].ID
+	}
+
+	t.Run("records an up vote", func(t *testing.T) {
+		s, id := setup()
+		if err := s.VoteOnSuggestion(id, "bob", VoteUp); err != nil {
+			t.Fatal(err)
+		}
+		if s.Suggestions[0].Votes["bob"] != VoteUp {
+			t.Errorf("want up, got %q", s.Suggestions[0].Votes["bob"])
+		}
+	})
+
+	t.Run("records a down vote", func(t *testing.T) {
+		s, id := setup()
+		if err := s.VoteOnSuggestion(id, "bob", VoteDown); err != nil {
+			t.Fatal(err)
+		}
+		if s.Suggestions[0].Votes["bob"] != VoteDown {
+			t.Errorf("want down, got %q", s.Suggestions[0].Votes["bob"])
+		}
+	})
+
+	t.Run("retracts a vote", func(t *testing.T) {
+		s, id := setup()
+		_ = s.VoteOnSuggestion(id, "bob", VoteUp)
+		if err := s.VoteOnSuggestion(id, "bob", VoteNone); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := s.Suggestions[0].Votes["bob"]; exists {
+			t.Error("want vote removed after retract")
+		}
+	})
+
+	t.Run("switches from up to down", func(t *testing.T) {
+		s, id := setup()
+		_ = s.VoteOnSuggestion(id, "bob", VoteUp)
+		_ = s.VoteOnSuggestion(id, "bob", VoteDown)
+		if s.Suggestions[0].Votes["bob"] != VoteDown {
+			t.Errorf("want down after switch, got %q", s.Suggestions[0].Votes["bob"])
+		}
+	})
+
+	t.Run("unknown suggestion ID is 404", func(t *testing.T) {
+		s := queue("alice")
+		wantDomainErr(t, s.VoteOnSuggestion("nope", "alice", VoteUp), 404)
+	})
 }

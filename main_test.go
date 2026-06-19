@@ -508,6 +508,136 @@ func TestReset(t *testing.T) {
 	})
 }
 
+// ── POST /api/suggestions ────────────────────────────────────────────────────
+
+func TestAddSuggestionHandler(t *testing.T) {
+	t.Run("adds suggestion and returns 201", func(t *testing.T) {
+		store := newMemStore(queue("alice", "bob"))
+		rec := call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"Wingspan","personId":"alice"}`)
+		if rec.Code != 201 {
+			t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body)
+		}
+		s := mustState(t, rec.Body.Bytes())
+		if len(s.Suggestions) != 1 || s.Suggestions[0].GameName != "Wingspan" {
+			t.Errorf("want Wingspan suggestion, got %+v", s.Suggestions)
+		}
+	})
+
+	t.Run("missing fields → 400", func(t *testing.T) {
+		store := newMemStore(queue("alice"))
+		rec := call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions", `{"gameName":"Catan"}`)
+		if rec.Code != 400 {
+			t.Fatalf("want 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("unknown person → 404", func(t *testing.T) {
+		store := newMemStore(queue("alice"))
+		rec := call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"Catan","personId":"nobody"}`)
+		if rec.Code != 404 {
+			t.Fatalf("want 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("duplicate game → 409", func(t *testing.T) {
+		store := newMemStore(queue("alice", "bob"))
+		call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"Wingspan","personId":"alice"}`)
+		rec := call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"WINGSPAN","personId":"bob"}`)
+		if rec.Code != 409 {
+			t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body)
+		}
+	})
+}
+
+// ── DELETE /api/suggestions/{id} ─────────────────────────────────────────────
+
+func TestDeleteSuggestionHandler(t *testing.T) {
+	t.Run("removes suggestion and returns 200", func(t *testing.T) {
+		store := newMemStore(queue("alice"))
+		call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"Catan","personId":"alice"}`)
+		id := store.s.Suggestions[0].ID
+
+		rec := callWithID(makeHandleDeleteSuggestion(store), http.MethodDelete, "/api/suggestions/"+id, id, "")
+		if rec.Code != 200 {
+			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
+		}
+		s := mustState(t, rec.Body.Bytes())
+		if len(s.Suggestions) != 0 {
+			t.Errorf("want empty suggestions, got %+v", s.Suggestions)
+		}
+	})
+
+	t.Run("unknown ID → 404", func(t *testing.T) {
+		store := newMemStore(queue("alice"))
+		rec := callWithID(makeHandleDeleteSuggestion(store), http.MethodDelete, "/api/suggestions/nope", "nope", "")
+		if rec.Code != 404 {
+			t.Fatalf("want 404, got %d", rec.Code)
+		}
+	})
+}
+
+// ── POST /api/suggestions/{id}/vote ──────────────────────────────────────────
+
+func TestVoteHandler(t *testing.T) {
+	setup := func() (*memStore, string) {
+		store := newMemStore(queue("alice", "bob"))
+		call(makeHandleAddSuggestion(store), http.MethodPost, "/api/suggestions",
+			`{"gameName":"Wingspan","personId":"alice"}`)
+		return store, store.s.Suggestions[0].ID
+	}
+
+	t.Run("up vote recorded", func(t *testing.T) {
+		store, id := setup()
+		rec := callWithID(makeHandleVote(store), http.MethodPost, "/api/suggestions/"+id+"/vote", id,
+			`{"personId":"bob","direction":"up"}`)
+		if rec.Code != 200 {
+			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
+		}
+		s := mustState(t, rec.Body.Bytes())
+		if s.Suggestions[0].Votes["bob"] != VoteUp {
+			t.Errorf("want up, got %q", s.Suggestions[0].Votes["bob"])
+		}
+	})
+
+	t.Run("vote retracted", func(t *testing.T) {
+		store, id := setup()
+		callWithID(makeHandleVote(store), http.MethodPost, "/api/suggestions/"+id+"/vote", id,
+			`{"personId":"bob","direction":"up"}`)
+		rec := callWithID(makeHandleVote(store), http.MethodPost, "/api/suggestions/"+id+"/vote", id,
+			`{"personId":"bob","direction":""}`)
+		if rec.Code != 200 {
+			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
+		}
+		s := mustState(t, rec.Body.Bytes())
+		if _, exists := s.Suggestions[0].Votes["bob"]; exists {
+			t.Error("want vote removed after retract")
+		}
+	})
+
+	t.Run("missing personId → 400", func(t *testing.T) {
+		store, id := setup()
+		rec := callWithID(makeHandleVote(store), http.MethodPost, "/api/suggestions/"+id+"/vote", id,
+			`{"direction":"up"}`)
+		if rec.Code != 400 {
+			t.Fatalf("want 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("unknown suggestion → 404", func(t *testing.T) {
+		store := newMemStore(queue("alice"))
+		rec := callWithID(makeHandleVote(store), http.MethodPost, "/api/suggestions/nope/vote", "nope",
+			`{"personId":"alice","direction":"up"}`)
+		if rec.Code != 404 {
+			t.Fatalf("want 404, got %d", rec.Code)
+		}
+	})
+}
+
 // ── PUT /api/people/reorder ───────────────────────────────────────────────────
 
 func TestReorder(t *testing.T) {

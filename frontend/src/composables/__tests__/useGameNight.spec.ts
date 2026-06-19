@@ -64,6 +64,7 @@ function baseState(overrides: Partial<State> = {}): State {
   return {
     people: [person('alice', 0), person('bob', 1), person('charlie', 2)],
     history: [],
+    suggestions: [],
     ...overrides,
   }
 }

@@ -162,6 +162,63 @@
           </ul>
         </section>
 
+        <!-- Suggestions -->
+        <section class="suggestions-section" v-if="sortedPeople.length > 0">
+          <h2 class="section-title">Suggestions</h2>
+          <form class="suggest-form" @submit.prevent="onSuggest">
+            <select v-model="suggestPersonId" class="suggest-select">
+              <option value="" disabled>Who are you?</option>
+              <option v-for="p in sortedPeople" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <input
+              v-model="suggestGameName"
+              type="text"
+              placeholder="Suggest a game…"
+              class="suggest-input"
+              maxlength="80"
+            />
+            <button
+              type="submit"
+              class="btn btn-accent"
+              :disabled="!suggestGameName.trim() || !suggestPersonId || busy"
+            >Add</button>
+          </form>
+
+          <ul class="suggestion-list" v-if="sortedSuggestions.length > 0">
+            <li v-for="s in sortedSuggestions" :key="s.id" class="suggestion-item">
+              <div class="suggestion-header">
+                <span
+                  class="suggestion-score"
+                  :class="{ 'score--pos': netScore(s) > 0, 'score--neg': netScore(s) < 0 }"
+                >{{ netScore(s) > 0 ? '+' : '' }}{{ netScore(s) }}</span>
+                <div class="suggestion-meta">
+                  <span class="suggestion-game">{{ s.gameName }}</span>
+                  <span class="suggestion-by">suggested by {{ nameById(s.suggestedBy) }}</span>
+                </div>
+                <button class="btn-remove" @click="removeSuggestion(s.id)" title="Remove suggestion">✕</button>
+              </div>
+              <div class="suggestion-votes">
+                <div v-for="p in sortedPeople" :key="p.id" class="vote-row">
+                  <span class="vote-name">{{ p.name }}</span>
+                  <button
+                    class="btn-vote"
+                    :class="{ 'btn-vote--up': s.votes[p.id] === 'up' }"
+                    @click="onVote(s.id, p.id, s.votes[p.id] === 'up' ? '' : 'up')"
+                    title="Thumbs up"
+                  >👍</button>
+                  <button
+                    class="btn-vote"
+                    :class="{ 'btn-vote--down': s.votes[p.id] === 'down' }"
+                    @click="onVote(s.id, p.id, s.votes[p.id] === 'down' ? '' : 'down')"
+                    title="Thumbs down"
+                  >👎</button>
+                </div>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="hint">No suggestions yet — be the first!</p>
+        </section>
+
         <!-- Manage panel: add players + session date -->
         <section v-if="showManage" class="manage-section">
           <h2 class="section-title">Manage Players</h2>
@@ -209,7 +266,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import draggable from 'vuedraggable'
-import { useGameNight, createApiFetcher } from './composables/useGameNight'
+import { useGameNight, createApiFetcher, netScore, type VoteDirection } from './composables/useGameNight'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
@@ -228,6 +285,7 @@ const {
   recentHistory,
   attendingCount,
   pendingPick,
+  sortedSuggestions,
   addPerson,
   removePerson,
   submitPick,
@@ -238,12 +296,17 @@ const {
   resetData,
   updateSessionDate,
   onDragEnd,
+  addSuggestion,
+  removeSuggestion,
+  voteOnSuggestion,
 } = useGameNight(createApiFetcher(API))
 
 // Presentation-only state stays in the component.
 const showManage = ref(false)
 const newName = ref('')
 const gameInputRef = ref<HTMLInputElement | null>(null)
+const suggestPersonId = ref('')
+const suggestGameName = ref('')
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -273,8 +336,18 @@ function onEditPick() {
 }
 
 function onResetData() {
-  if (!confirm('Clear recent picks and attendance? Queue order is kept.')) return
+  if (!confirm('Clear recent picks, attendance, and suggestions? Queue order is kept.')) return
   void resetData()
+}
+
+async function onSuggest() {
+  if (await addSuggestion(suggestPersonId.value, suggestGameName.value)) {
+    suggestGameName.value = ''
+  }
+}
+
+function onVote(suggestionId: string, personId: string, direction: VoteDirection) {
+  void voteOnSuggestion(suggestionId, personId, direction)
 }
 </script>
 
@@ -685,5 +758,107 @@ h1 {
   color-scheme: dark;
 }
 .date-input:focus { border-color: var(--accent); outline: none; }
+
+/* ── Suggestions ─────────────────────────────────────────────────────────── */
+.suggest-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.suggest-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.9rem;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.suggest-select:focus { border-color: var(--accent); outline: none; }
+.suggest-input {
+  flex: 1;
+  min-width: 8rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 0.65rem 0.9rem;
+  font-size: 0.9rem;
+  transition: border-color 0.15s;
+}
+.suggest-input:focus { border-color: var(--accent); outline: none; }
+.suggest-input::placeholder { color: var(--text-muted); }
+
+.suggestion-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.suggestion-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.9rem;
+}
+.suggestion-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.suggestion-score {
+  font-size: 0.85rem;
+  font-weight: 800;
+  min-width: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.score--pos { color: var(--success); }
+.score--neg { color: var(--danger); }
+.suggestion-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.suggestion-game { font-weight: 600; font-size: 0.95rem; }
+.suggestion-by { font-size: 0.75rem; color: var(--text-muted); }
+
+.suggestion-votes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+.vote-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.vote-name {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 4.5rem;
+  flex-shrink: 0;
+}
+.btn-vote {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  padding: 2px 8px;
+  line-height: 1.5;
+  transition: all 0.12s;
+}
+.btn-vote:hover { border-color: var(--accent); }
+.btn-vote--up {
+  background: var(--success-dim);
+  border-color: var(--success);
+}
+.btn-vote--down {
+  background: var(--danger-dim);
+  border-color: var(--danger);
+}
 
 </style>

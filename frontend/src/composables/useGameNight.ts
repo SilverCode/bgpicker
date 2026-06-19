@@ -20,11 +20,30 @@ export interface PendingPick {
   setAt: string
 }
 
+export type VoteDirection = '' | 'up' | 'down'
+
+export interface Suggestion {
+  id: string
+  gameName: string
+  suggestedBy: string
+  suggestedAt: string
+  votes: Record<string, VoteDirection>
+}
+
 export interface State {
   people: Person[]
   history: Pick[]
   pendingPick?: PendingPick
   nextSession?: string // ISO date string
+  suggestions: Suggestion[]
+}
+
+// netScore computes the net vote score for a suggestion (up count − down count).
+export function netScore(s: Suggestion): number {
+  return Object.values(s.votes).reduce(
+    (sum, v) => sum + (v === 'up' ? 1 : v === 'down' ? -1 : 0),
+    0,
+  )
 }
 
 // Fetcher is the network seam. The real adapter wraps fetch(); tests supply a
@@ -94,6 +113,15 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
   const pendingPick = computed<PendingPick | undefined>(() =>
     editing.value ? undefined : (state.value?.pendingPick ?? undefined),
   )
+
+  const sortedSuggestions = computed<Suggestion[]>(() => {
+    if (!state.value?.suggestions) return []
+    return [...state.value.suggestions].sort((a, b) => {
+      const diff = netScore(b) - netScore(a)
+      if (diff !== 0) return diff
+      return new Date(a.suggestedAt).getTime() - new Date(b.suggestedAt).getTime()
+    })
+  })
 
   // Keep dragList in sync with server state, but not while a drag is in progress
   watch(
@@ -210,6 +238,31 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     await run(() => fetcher('PUT', '/api/session', { date: sessionDateInput.value }))
   }
 
+  async function addSuggestion(personId: string, gameName: string): Promise<boolean> {
+    if (!personId || !gameName.trim()) return false
+    busy.value = true
+    try {
+      state.value = (await fetcher('POST', '/api/suggestions', {
+        personId,
+        gameName: gameName.trim(),
+      })) as State
+      return true
+    } catch (e) {
+      error.value = (e as Error).message
+      return false
+    } finally {
+      busy.value = false
+    }
+  }
+
+  async function removeSuggestion(id: string) {
+    await run(() => fetcher('DELETE', `/api/suggestions/${id}`))
+  }
+
+  async function voteOnSuggestion(id: string, personId: string, direction: VoteDirection) {
+    await run(() => fetcher('POST', `/api/suggestions/${id}/vote`, { personId, direction }))
+  }
+
   async function onDragEnd() {
     dragging.value = false
     const s = await run(() =>
@@ -251,6 +304,7 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     recentHistory,
     attendingCount,
     pendingPick,
+    sortedSuggestions,
     // actions
     refresh,
     addPerson,
@@ -263,5 +317,8 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     resetData,
     updateSessionDate,
     onDragEnd,
+    addSuggestion,
+    removeSuggestion,
+    voteOnSuggestion,
   }
 }
