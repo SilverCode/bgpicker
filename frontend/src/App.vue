@@ -1,5 +1,20 @@
 <template>
   <div class="app">
+
+    <!-- Identity overlay — shown until the user picks who they are -->
+    <div v-if="showIdentityPicker" class="identity-overlay">
+      <div class="identity-card">
+        <div class="identity-icon">👋</div>
+        <h2 class="identity-title">Who are you?</h2>
+        <p class="identity-sub">Your suggestions and votes will be remembered on this device.</p>
+        <ul class="identity-list">
+          <li v-for="p in sortedPeople" :key="p.id">
+            <button class="btn-identity" @click="selectIdentity(p.id)">{{ p.name }}</button>
+          </li>
+        </ul>
+      </div>
+    </div>
+
     <!-- Header -->
     <header class="header">
       <div class="header-inner">
@@ -7,8 +22,29 @@
           <span class="header-icon">🎲</span>
           <h1>Board Game Picker</h1>
         </div>
-        <button class="btn-icon" @click="showManage = !showManage" title="Manage players">
-          ⚙️
+        <div class="header-actions">
+          <button
+            v-if="myPerson"
+            class="btn-who"
+            @click="clearIdentity"
+            :title="'Playing as ' + myPerson.name + ' — tap to change'"
+          >{{ myPerson.name }}</button>
+          <button class="btn-icon" @click="showManage = !showManage" title="Manage players">⚙️</button>
+        </div>
+      </div>
+      <div class="tab-bar">
+        <button
+          class="tab-btn"
+          :class="{ 'tab-btn--active': activeTab === 'night' }"
+          @click="activeTab = 'night'"
+        >🎲 Game Night</button>
+        <button
+          class="tab-btn"
+          :class="{ 'tab-btn--active': activeTab === 'suggestions' }"
+          @click="activeTab = 'suggestions'"
+        >
+          💡 Suggestions
+          <span v-if="sortedSuggestions.length > 0" class="tab-badge">{{ sortedSuggestions.length }}</span>
         </button>
       </div>
     </header>
@@ -29,147 +65,187 @@
 
       <template v-else>
 
-        <!-- Current Picker Card -->
-        <section v-if="currentPicker && !pendingPick" class="current-card">
-          <div class="current-label">🎯 It's your turn to pick!</div>
-          <div class="current-name">{{ currentPicker.name }}</div>
+        <!-- ── Game Night tab ─────────────────────────────────────────────── -->
+        <template v-if="activeTab === 'night'">
 
-          <!-- Game input -->
-          <div class="pick-form">
-            <div class="input-row">
-              <input
-                v-model="gameName"
-                type="text"
-                placeholder="Enter a board game…"
-                class="game-input"
-                @keydown.enter="submitPick"
-                maxlength="80"
-                ref="gameInputRef"
-              />
+          <!-- Current Picker Card -->
+          <section v-if="currentPicker && !pendingPick" class="current-card">
+            <div class="current-label">🎯 It's your turn to pick!</div>
+            <div class="current-name">{{ currentPicker.name }}</div>
+
+            <!-- Game input -->
+            <div class="pick-form">
+              <div class="input-row">
+                <input
+                  v-model="gameName"
+                  type="text"
+                  placeholder="Enter a board game…"
+                  class="game-input"
+                  @keydown.enter="submitPick"
+                  maxlength="80"
+                  ref="gameInputRef"
+                />
+              </div>
+              <div class="pick-actions">
+                <button class="btn btn-primary" :disabled="!gameName.trim() || busy" @click="submitPick">
+                  ✅ Pick this game
+                </button>
+                <button class="btn btn-secondary" :disabled="busy || queueLength <= 1" @click="submitSkip">
+                  ⏭️ Skip my turn
+                </button>
+              </div>
+              <p v-if="queueLength <= 1" class="hint">Add more people to enable skipping.</p>
             </div>
-            <div class="pick-actions">
-              <button class="btn btn-primary" :disabled="!gameName.trim() || busy" @click="submitPick">
-                ✅ Pick this game
+          </section>
+
+          <!-- Picker owns the pending pick: show edit + done controls -->
+          <section v-else-if="currentPicker && pendingPick?.personId === currentPicker.id" class="current-card current-card--picked">
+            <div class="current-label">🎯 Game chosen!</div>
+            <div class="current-name">{{ currentPicker.name }}</div>
+            <div class="pick-done">
+              <div class="pick-chosen">
+                🎮 <strong>{{ pendingPick!.gameName }}</strong>
+                <button class="btn-edit" @click="onEditPick" title="Change game">✏️ Edit</button>
+              </div>
+              <p class="pick-done-text">Tap below when the night is over to pass the turn.</p>
+              <button class="btn btn-success" :disabled="busy" @click="confirmDone">
+                🏁 Done — end of the night
               </button>
-              <button class="btn btn-secondary" :disabled="busy || queueLength <= 1" @click="submitSkip">
-                ⏭️ Skip my turn
-              </button>
             </div>
-            <p v-if="queueLength <= 1" class="hint">Add more people to enable skipping.</p>
-          </div>
-        </section>
+          </section>
 
-        <!-- Picker owns the pending pick: show edit + done controls -->
-        <section v-else-if="currentPicker && pendingPick?.personId === currentPicker.id" class="current-card current-card--picked">
-          <div class="current-label">🎯 Game chosen!</div>
-          <div class="current-name">{{ currentPicker.name }}</div>
-          <div class="pick-done">
-            <div class="pick-chosen">
-              🎮 <strong>{{ pendingPick!.gameName }}</strong>
-              <button class="btn-edit" @click="onEditPick" title="Change game">✏️ Edit</button>
+          <!-- No people state -->
+          <section v-else-if="sortedPeople.length === 0" class="empty-state">
+            <div class="empty-icon">🎲</div>
+            <h2>No players yet</h2>
+            <p>Tap ⚙️ above to add some people!</p>
+          </section>
+
+          <!-- Next session strip -->
+          <section class="session-strip" v-if="state?.nextSession">
+            <div class="session-info">
+              <span class="session-icon">📅</span>
+              <div class="session-text">
+                <span class="session-label">Next session</span>
+                <span class="session-date">{{ formatSessionDate(state.nextSession) }}</span>
+              </div>
             </div>
-            <p class="pick-done-text">Tap below when the night is over to pass the turn.</p>
-            <button class="btn btn-success" :disabled="busy" @click="confirmDone">
-              🏁 Done — end of the night
-            </button>
-          </div>
-        </section>
-
-        <!-- No people state -->
-        <section v-else-if="sortedPeople.length === 0" class="empty-state">
-          <div class="empty-icon">🎲</div>
-          <h2>No players yet</h2>
-          <p>Tap ⚙️ above to add some people!</p>
-        </section>
-
-        <!-- Next session strip -->
-        <section class="session-strip" v-if="state?.nextSession">
-          <div class="session-info">
-            <span class="session-icon">📅</span>
-            <div class="session-text">
-              <span class="session-label">Next session</span>
-              <span class="session-date">{{ formatSessionDate(state.nextSession) }}</span>
+            <div class="session-count" v-if="sortedPeople.length > 0">
+              <span class="count-num">{{ attendingCount }}</span>
+              <span class="count-denom">/{{ sortedPeople.length }}</span>
+              <span class="count-label">going</span>
             </div>
-          </div>
-          <div class="session-count" v-if="sortedPeople.length > 0">
-            <span class="count-num">{{ attendingCount }}</span>
-            <span class="count-denom">/{{ sortedPeople.length }}</span>
-            <span class="count-label">going</span>
-          </div>
-        </section>
+          </section>
 
-        <!-- Queue -->
-        <section class="queue-section" v-if="sortedPeople.length > 0">
-          <h2 class="section-title">
-            Queue
-            <span v-if="showManage" class="section-hint">drag ⠿ to reorder</span>
-          </h2>
-          <draggable
-            v-model="dragList"
-            item-key="id"
-            tag="ul"
-            class="queue-list"
-            handle=".drag-handle"
-            :disabled="!showManage"
-            ghost-class="queue-item--ghost"
-            chosen-class="queue-item--chosen"
-            animation="180"
-            @start="dragging = true"
-            @end="onDragEnd"
-          >
-            <template #item="{ element: person, index }">
-              <li
-                class="queue-item"
-                :class="{ 'queue-item--current': index === 0 }"
-              >
-                <span
-                  class="drag-handle"
-                  :class="{ 'drag-handle--active': showManage }"
-                  title="Drag to reorder"
-                >⠿</span>
-                <div class="queue-position">
-                  <span v-if="index === 0" class="position-crown">👑</span>
-                  <span v-else class="position-num">{{ index + 1 }}</span>
-                </div>
-                <div class="queue-name">{{ person.name }}</div>
-                <button
-                  class="btn-attend"
-                  :class="{ 'btn-attend--yes': person.attending === 'yes', 'btn-attend--no': person.attending === 'no' }"
-                  @click="toggleAttendance(person.id)"
-                  :title="person.attending === 'yes' ? 'Going — click to mark as not going' : person.attending === 'no' ? 'Not going — click to clear' : 'Click to mark as going'"
-                >{{ person.attending === 'yes' ? '✓ Going' : person.attending === 'no' ? '✗ Not going' : 'Going?' }}</button>
-                <button
-                  v-if="showManage"
-                  class="btn-remove"
-                  @click="removePerson(person.id)"
-                  title="Remove player"
-                >✕</button>
+          <!-- Queue -->
+          <section class="queue-section" v-if="sortedPeople.length > 0">
+            <h2 class="section-title">
+              Queue
+              <span v-if="showManage" class="section-hint">drag ⠿ to reorder</span>
+            </h2>
+            <draggable
+              v-model="dragList"
+              item-key="id"
+              tag="ul"
+              class="queue-list"
+              handle=".drag-handle"
+              :disabled="!showManage"
+              ghost-class="queue-item--ghost"
+              chosen-class="queue-item--chosen"
+              animation="180"
+              @start="dragging = true"
+              @end="onDragEnd"
+            >
+              <template #item="{ element: person, index }">
+                <li
+                  class="queue-item"
+                  :class="{ 'queue-item--current': index === 0 }"
+                >
+                  <span
+                    class="drag-handle"
+                    :class="{ 'drag-handle--active': showManage }"
+                    title="Drag to reorder"
+                  >⠿</span>
+                  <div class="queue-position">
+                    <span v-if="index === 0" class="position-crown">👑</span>
+                    <span v-else class="position-num">{{ index + 1 }}</span>
+                  </div>
+                  <div class="queue-name">{{ person.name }}</div>
+                  <button
+                    class="btn-attend"
+                    :class="{ 'btn-attend--yes': person.attending === 'yes', 'btn-attend--no': person.attending === 'no' }"
+                    @click="toggleAttendance(person.id)"
+                    :title="person.attending === 'yes' ? 'Going — click to mark as not going' : person.attending === 'no' ? 'Not going — click to clear' : 'Click to mark as going'"
+                  >{{ person.attending === 'yes' ? '✓ Going' : person.attending === 'no' ? '✗ Not going' : 'Going?' }}</button>
+                  <button
+                    v-if="showManage"
+                    class="btn-remove"
+                    @click="removePerson(person.id)"
+                    title="Remove player"
+                  >✕</button>
+                </li>
+              </template>
+            </draggable>
+          </section>
+
+          <!-- History -->
+          <section class="history-section" v-if="recentHistory.length > 0">
+            <h2 class="section-title">Recent picks</h2>
+            <ul class="history-list">
+              <li v-for="(pick, i) in recentHistory" :key="i" class="history-item">
+                <span class="history-person">{{ nameById(pick.personId) }}</span>
+                <span v-if="!pick.skipped" class="history-game">{{ pick.gameName }}</span>
+                <span v-else class="history-skipped">skipped</span>
+                <span class="history-time">{{ formatDate(pick.pickedAt) }}</span>
               </li>
-            </template>
-          </draggable>
-        </section>
+            </ul>
+          </section>
 
-        <!-- History -->
-        <section class="history-section" v-if="recentHistory.length > 0">
-          <h2 class="section-title">Recent picks</h2>
-          <ul class="history-list">
-            <li v-for="(pick, i) in recentHistory" :key="i" class="history-item">
-              <span class="history-person">{{ nameById(pick.personId) }}</span>
-              <span v-if="!pick.skipped" class="history-game">{{ pick.gameName }}</span>
-              <span v-else class="history-skipped">skipped</span>
-              <span class="history-time">{{ formatDate(pick.pickedAt) }}</span>
-            </li>
-          </ul>
-        </section>
+          <!-- Manage panel: add players + session date -->
+          <section v-if="showManage" class="manage-section">
+            <h2 class="section-title">Manage Players</h2>
+            <form class="add-form" @submit.prevent="onAddPerson">
+              <input
+                v-model="newName"
+                type="text"
+                placeholder="Player name…"
+                class="add-input"
+                maxlength="40"
+              />
+              <button type="submit" class="btn btn-accent" :disabled="!newName.trim() || busy">
+                + Add
+              </button>
+            </form>
+            <p class="hint" v-if="sortedPeople.length > 0">Tap ✕ next to a name in the queue to remove them.</p>
 
-        <!-- Suggestions -->
-        <section class="suggestions-section" v-if="sortedPeople.length > 0">
-          <h2 class="section-title">Suggestions</h2>
-          <form class="suggest-form" @submit.prevent="onSuggest">
-            <select v-model="suggestPersonId" class="suggest-select">
-              <option value="" disabled>Who are you?</option>
-              <option v-for="p in sortedPeople" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <div class="session-edit">
+              <label class="session-edit-label">📅 Next session date</label>
+              <div class="session-edit-row">
+                <input
+                  type="date"
+                  v-model="sessionDateInput"
+                  class="date-input"
+                />
+                <button class="btn btn-accent" :disabled="busy" @click="updateSessionDate">
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div class="reset-section">
+              <button class="btn btn-danger" :disabled="busy" @click="onResetData">
+                🗑️ Reset picks &amp; attendance
+              </button>
+              <p class="hint">Clears picks, suggestions, and attendance. Queue order is kept.</p>
+            </div>
+          </section>
+
+        </template>
+
+        <!-- ── Suggestions tab ───────────────────────────────────────────── -->
+        <template v-if="activeTab === 'suggestions'">
+
+          <form v-if="myPerson" class="suggest-form" @submit.prevent="onSuggest">
             <input
               v-model="suggestGameName"
               type="text"
@@ -177,86 +253,44 @@
               class="suggest-input"
               maxlength="80"
             />
-            <button
-              type="submit"
-              class="btn btn-accent"
-              :disabled="!suggestGameName.trim() || !suggestPersonId || busy"
-            >Add</button>
+            <button type="submit" class="btn btn-accent" :disabled="!suggestGameName.trim() || busy">
+              Add
+            </button>
           </form>
+          <p v-else-if="sortedPeople.length > 0" class="hint hint--center">
+            Tap your name in the top right to suggest and vote.
+          </p>
 
           <ul class="suggestion-list" v-if="sortedSuggestions.length > 0">
             <li v-for="s in sortedSuggestions" :key="s.id" class="suggestion-item">
-              <div class="suggestion-header">
-                <span
-                  class="suggestion-score"
-                  :class="{ 'score--pos': netScore(s) > 0, 'score--neg': netScore(s) < 0 }"
-                >{{ netScore(s) > 0 ? '+' : '' }}{{ netScore(s) }}</span>
-                <div class="suggestion-meta">
-                  <span class="suggestion-game">{{ s.gameName }}</span>
-                  <span class="suggestion-by">suggested by {{ nameById(s.suggestedBy) }}</span>
-                </div>
-                <button class="btn-remove" @click="removeSuggestion(s.id)" title="Remove suggestion">✕</button>
+              <div class="suggestion-info">
+                <span class="suggestion-game">{{ s.gameName }}</span>
+                <span class="suggestion-by"> ({{ nameById(s.suggestedBy) }})</span>
               </div>
-              <div class="suggestion-votes">
-                <div v-for="p in sortedPeople" :key="p.id" class="vote-row">
-                  <span class="vote-name">{{ p.name }}</span>
-                  <button
-                    class="btn-vote"
-                    :class="{ 'btn-vote--up': s.votes[p.id] === 'up' }"
-                    @click="onVote(s.id, p.id, s.votes[p.id] === 'up' ? '' : 'up')"
-                    title="Thumbs up"
-                  >👍</button>
-                  <button
-                    class="btn-vote"
-                    :class="{ 'btn-vote--down': s.votes[p.id] === 'down' }"
-                    @click="onVote(s.id, p.id, s.votes[p.id] === 'down' ? '' : 'down')"
-                    title="Thumbs down"
-                  >👎</button>
-                </div>
+              <span
+                class="suggestion-score"
+                :class="{ 'score--pos': netScore(s) > 0, 'score--neg': netScore(s) < 0 }"
+              >{{ netScore(s) > 0 ? '+' : '' }}{{ netScore(s) }}</span>
+              <div class="suggestion-vote-btns" v-if="myPerson">
+                <button
+                  class="btn-vote"
+                  :class="{ 'btn-vote--up': myVote(s) === 'up' }"
+                  @click="onVote(s, 'up')"
+                  title="Thumbs up"
+                >👍</button>
+                <button
+                  class="btn-vote"
+                  :class="{ 'btn-vote--down': myVote(s) === 'down' }"
+                  @click="onVote(s, 'down')"
+                  title="Thumbs down"
+                >👎</button>
               </div>
+              <button class="btn-remove" @click="removeSuggestion(s.id)" title="Remove suggestion">✕</button>
             </li>
           </ul>
-          <p v-else class="hint">No suggestions yet — be the first!</p>
-        </section>
+          <p v-else class="hint hint--center">No suggestions yet — be the first!</p>
 
-        <!-- Manage panel: add players + session date -->
-        <section v-if="showManage" class="manage-section">
-          <h2 class="section-title">Manage Players</h2>
-          <form class="add-form" @submit.prevent="onAddPerson">
-            <input
-              v-model="newName"
-              type="text"
-              placeholder="Player name…"
-              class="add-input"
-              maxlength="40"
-            />
-            <button type="submit" class="btn btn-accent" :disabled="!newName.trim() || busy">
-              + Add
-            </button>
-          </form>
-          <p class="hint" v-if="sortedPeople.length > 0">Tap ✕ next to a name in the queue to remove them.</p>
-
-          <div class="session-edit">
-            <label class="session-edit-label">📅 Next session date</label>
-            <div class="session-edit-row">
-              <input
-                type="date"
-                v-model="sessionDateInput"
-                class="date-input"
-              />
-              <button class="btn btn-accent" :disabled="busy" @click="updateSessionDate">
-                Save
-              </button>
-            </div>
-          </div>
-
-          <div class="reset-section">
-            <button class="btn btn-danger" :disabled="busy" @click="onResetData">
-              🗑️ Reset picks &amp; attendance
-            </button>
-            <p class="hint">Clears recent picks, pending game, and attendance. Queue order is kept.</p>
-          </div>
-        </section>
+        </template>
 
       </template>
     </main>
@@ -264,9 +298,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import draggable from 'vuedraggable'
-import { useGameNight, createApiFetcher, netScore, type VoteDirection } from './composables/useGameNight'
+import {
+  useGameNight,
+  createApiFetcher,
+  netScore,
+  type Suggestion,
+  type VoteDirection,
+} from './composables/useGameNight'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
@@ -301,14 +341,39 @@ const {
   voteOnSuggestion,
 } = useGameNight(createApiFetcher(API))
 
-// Presentation-only state stays in the component.
+// ── Presentation-only state ───────────────────────────────────────────────────
+
 const showManage = ref(false)
 const newName = ref('')
 const gameInputRef = ref<HTMLInputElement | null>(null)
-const suggestPersonId = ref('')
+const activeTab = ref<'night' | 'suggestions'>('night')
 const suggestGameName = ref('')
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── Identity — who is using this device ──────────────────────────────────────
+
+const IDENTITY_KEY = 'bgpicker:who'
+
+const myPersonId = ref(localStorage.getItem(IDENTITY_KEY) ?? '')
+
+// myPerson is null when: no identity set, or the stored person was removed.
+const myPerson = computed(() => sortedPeople.value.find(p => p.id === myPersonId.value) ?? null)
+
+// Show the identity picker when people exist but no valid identity is set.
+const showIdentityPicker = computed(
+  () => !loading.value && sortedPeople.value.length > 0 && !myPerson.value,
+)
+
+function selectIdentity(id: string) {
+  myPersonId.value = id
+  localStorage.setItem(IDENTITY_KEY, id)
+}
+
+function clearIdentity() {
+  myPersonId.value = ''
+  localStorage.removeItem(IDENTITY_KEY)
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function nameById(id: string): string {
   return state.value?.people.find(p => p.id === id)?.name ?? 'Unknown'
@@ -324,7 +389,12 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-// ── handlers wrapping composable actions with DOM concerns ───────────────────
+function myVote(s: Suggestion): VoteDirection {
+  if (!myPersonId.value) return ''
+  return s.votes[myPersonId.value] ?? ''
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
 
 async function onAddPerson() {
   if (await addPerson(newName.value)) newName.value = ''
@@ -336,18 +406,22 @@ function onEditPick() {
 }
 
 function onResetData() {
-  if (!confirm('Clear recent picks, attendance, and suggestions? Queue order is kept.')) return
+  if (!confirm('Clear recent picks, suggestions, and attendance? Queue order is kept.')) return
   void resetData()
 }
 
 async function onSuggest() {
-  if (await addSuggestion(suggestPersonId.value, suggestGameName.value)) {
+  if (!myPersonId.value) return
+  if (await addSuggestion(myPersonId.value, suggestGameName.value)) {
     suggestGameName.value = ''
   }
 }
 
-function onVote(suggestionId: string, personId: string, direction: VoteDirection) {
-  void voteOnSuggestion(suggestionId, personId, direction)
+function onVote(s: Suggestion, direction: VoteDirection) {
+  if (!myPersonId.value) return
+  // Clicking the active direction retracts; clicking the other switches sides.
+  const newDir: VoteDirection = myVote(s) === direction ? '' : direction
+  void voteOnSuggestion(s.id, myPersonId.value, newDir)
 }
 </script>
 
@@ -357,6 +431,47 @@ function onVote(suggestionId: string, personId: string, direction: VoteDirection
   max-width: 540px;
   margin: 0 auto;
   padding-bottom: 3rem;
+}
+
+/* ── Identity overlay ────────────────────────────────────────────────────── */
+.identity-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+.identity-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2rem 1.5rem;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+.identity-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.identity-title { font-size: 1.3rem; font-weight: 800; margin-bottom: 0.4rem; }
+.identity-sub { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem; }
+.identity-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.btn-identity {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  transition: all 0.12s;
+}
+.btn-identity:hover {
+  border-color: var(--accent);
+  color: var(--accent-light);
+  background: var(--accent-dim);
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -371,7 +486,7 @@ function onVote(suggestionId: string, personId: string, direction: VoteDirection
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.9rem 1rem;
+  padding: 0.9rem 1rem 0.6rem;
 }
 .header-title {
   display: flex;
@@ -384,6 +499,18 @@ h1 {
   font-weight: 700;
   letter-spacing: -0.02em;
 }
+.header-actions { display: flex; align-items: center; gap: 0.5rem; }
+.btn-who {
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent-light);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.btn-who:hover { background: var(--accent); color: #fff; }
 .btn-icon {
   background: var(--surface2);
   border-radius: var(--radius-sm);
@@ -395,6 +522,41 @@ h1 {
   font-size: 1.1rem;
 }
 .btn-icon:hover { background: var(--border); }
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  padding: 0 1rem 0;
+  gap: 0;
+}
+.tab-btn {
+  flex: 1;
+  padding: 0.55rem 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  transition: all 0.12s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn--active {
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
+}
+.tab-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
 .main {
@@ -645,7 +807,7 @@ h1 {
 /* Drag handle */
 .drag-handle {
   font-size: 1.1rem;
-  color: transparent; /* invisible when not in manage mode */
+  color: transparent;
   cursor: default;
   user-select: none;
   flex-shrink: 0;
@@ -717,6 +879,7 @@ h1 {
 .add-input:focus { border-color: var(--accent); }
 .add-input::placeholder { color: var(--text-muted); }
 .hint { color: var(--text-muted); font-size: 0.82rem; }
+.hint--center { text-align: center; padding: 2rem 0; }
 
 /* ── Session strip ───────────────────────────────────────────────────────── */
 .session-strip {
@@ -759,27 +922,13 @@ h1 {
 }
 .date-input:focus { border-color: var(--accent); outline: none; }
 
-/* ── Suggestions ─────────────────────────────────────────────────────────── */
+/* ── Suggestions tab ─────────────────────────────────────────────────────── */
 .suggest-form {
   display: flex;
   gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
 }
-.suggest-select {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  padding: 0.65rem 0.75rem;
-  font-size: 0.9rem;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-.suggest-select:focus { border-color: var(--accent); outline: none; }
 .suggest-input {
   flex: 1;
-  min-width: 8rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -791,74 +940,40 @@ h1 {
 .suggest-input:focus { border-color: var(--accent); outline: none; }
 .suggest-input::placeholder { color: var(--text-muted); }
 
-.suggestion-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.suggestion-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
 .suggestion-item {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 0.9rem;
-}
-.suggestion-header {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  margin-bottom: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.9rem;
 }
+.suggestion-info { flex: 1; min-width: 0; }
+.suggestion-game { font-weight: 600; font-size: 0.95rem; }
+.suggestion-by { font-size: 0.82rem; color: var(--text-muted); }
 .suggestion-score {
   font-size: 0.85rem;
-  font-weight: 800;
-  min-width: 2rem;
+  font-weight: 700;
+  min-width: 2.2rem;
   text-align: center;
-  color: var(--text-muted);
   flex-shrink: 0;
+  color: var(--text-muted);
 }
 .score--pos { color: var(--success); }
 .score--neg { color: var(--danger); }
-.suggestion-meta {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  min-width: 0;
-}
-.suggestion-game { font-weight: 600; font-size: 0.95rem; }
-.suggestion-by { font-size: 0.75rem; color: var(--text-muted); }
-
-.suggestion-votes {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding-top: 0.35rem;
-  border-top: 1px solid var(--border);
-}
-.vote-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.vote-name {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  min-width: 4.5rem;
-  flex-shrink: 0;
-}
+.suggestion-vote-btns { display: flex; gap: 0.25rem; flex-shrink: 0; }
 .btn-vote {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
-  padding: 2px 8px;
+  padding: 3px 8px;
   line-height: 1.5;
   transition: all 0.12s;
 }
 .btn-vote:hover { border-color: var(--accent); }
-.btn-vote--up {
-  background: var(--success-dim);
-  border-color: var(--success);
-}
-.btn-vote--down {
-  background: var(--danger-dim);
-  border-color: var(--danger);
-}
-
+.btn-vote--up { background: var(--success-dim); border-color: var(--success); }
+.btn-vote--down { background: var(--danger-dim); border-color: var(--danger); }
 </style>
