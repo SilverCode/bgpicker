@@ -19,17 +19,31 @@ Neither half of that is achievable as stated:
   Business Platform access requires Meta business verification for a
   persistent, un-expiring number. The only tier that doesn't is Twilio's
   **Sandbox**: a shared, free-to-use number that requires each recipient to
-  opt in once via a join code, and restricts proactive (business-initiated)
-  messages to pre-approved template strings rather than free text.
+  opt in once via a join code.
+- **No custom templates on the Sandbox, at any price.** Proactive
+  (business-initiated) WhatsApp messages must use a pre-approved Content
+  template rather than free text. We initially assumed a custom-worded
+  template could still be submitted and approved while staying on the
+  Sandbox — that's wrong. The Sandbox only permits its three fixed,
+  Twilio-provided sample templates (Appointment Reminders, Order
+  Notifications, Verification Codes); submitting your own wording for
+  approval requires a verified business sender, the exact thing we're
+  avoiding.
 
 ## Decision
 
 Fan out a reminder to each Person's individual phone number (rather than a
 group post), sent through Twilio's WhatsApp Sandbox (rather than a verified
 business sender). Recipients join once via Twilio's sandbox join code.
-Reminder content is limited to two pre-approved templates — one for "no pick
-yet", one for "game already picked" — selected based on whether the current
-picker has a Pending pick.
+
+Reminder content is repurposed into the Sandbox's fixed **"Appointment
+Reminders"** sample template — `"Your appointment is coming up on {{1}} at
+{{2}}"` — since it's the best fit of the three fixed options. `{{1}}` carries
+the session date as the template intends; `{{2}}` (nominally a time) instead
+carries who's picking and, if chosen, their game (e.g. `"alice's pick: Catan"`),
+since no fixed template has a slot actually meant for that. The other two
+fixed templates (order-shipping, verification-code wording) were rejected as
+worse fits — they'd read as e-commerce spam or a stolen 2FA code.
 
 ## Consequences
 
@@ -39,11 +53,11 @@ picker has a Pending pick.
 - The sandbox number is shared with every other Twilio developer using
   sandbox mode; sandbox sessions can require recipients to re-join
   periodically if inactive.
-- Reminder copy is frozen to two fixed templates with numbered variable
-  slots — no free-text or conditional content within a template. Adding a
-  third scenario (e.g. a different message when nobody's attending) means
-  submitting and waiting on approval for a new template, not just a code
-  change.
+- Reminder copy visibly reads as a repurposed appointment reminder, not
+  bespoke wording — this was accepted as a stopgap in exchange for not
+  requiring business verification. There's no way to improve the copy
+  without either accepting this, or revisiting the decision below.
 - Moving to a verified business sender later is possible but not free: it
-  requires Meta business verification and reconfiguring the sender, and
+  requires Meta business verification, reconfiguring the sender, and
+  submitting the originally-envisioned custom templates for approval;
   existing sandbox opt-ins don't carry over.

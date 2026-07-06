@@ -156,13 +156,12 @@ func testReminderConfig(transport *fakeTwilioTransport) *ReminderConfig {
 			From:       "whatsapp:+14155238886",
 			HTTPClient: &http.Client{Transport: transport},
 		},
-		TemplateNoPickSID:   "HXnoPick",
-		TemplateWithPickSID: "HXwithPick",
+		TemplateSID: "HXappointment",
 	}
 }
 
 func TestSendReminderNowHandler(t *testing.T) {
-	t.Run("sends to every recipient with a phone, picks the no-pick template", func(t *testing.T) {
+	t.Run("sends to every recipient with a phone, no game yet", func(t *testing.T) {
 		q := queue("alice", "bob")
 		q.People[0].Phone = "+15551110000"
 		q.People[1].Phone = "" // no phone — skipped
@@ -180,15 +179,18 @@ func TestSendReminderNowHandler(t *testing.T) {
 		if len(transport.calls) != 1 {
 			t.Fatalf("want 1 Twilio call (alice only), got %d", len(transport.calls))
 		}
-		if got := transport.calls[0].Get("ContentSid"); got != "HXnoPick" {
-			t.Errorf("want no-pick template, got %q", got)
+		if got := transport.calls[0].Get("ContentSid"); got != "HXappointment" {
+			t.Errorf("want the appointment template, got %q", got)
+		}
+		if got := transport.calls[0].Get("ContentVariables"); !strings.Contains(got, `"2":"alice's pick"`) {
+			t.Errorf("want {{2}} = \"alice's pick\" with no game, got %q", got)
 		}
 		if store.s.RemindedForSession == nil || !store.s.RemindedForSession.Equal(session) {
 			t.Errorf("want RemindedForSession set to session, got %v", store.s.RemindedForSession)
 		}
 	})
 
-	t.Run("picks the with-pick template when the current picker has chosen", func(t *testing.T) {
+	t.Run("includes the game when the current picker has chosen", func(t *testing.T) {
 		q := queue("alice")
 		q.People[0].Phone = "+15551110000"
 		session := time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
@@ -203,8 +205,8 @@ func TestSendReminderNowHandler(t *testing.T) {
 		if rec.Code != 200 {
 			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body)
 		}
-		if got := transport.calls[0].Get("ContentSid"); got != "HXwithPick" {
-			t.Errorf("want with-pick template, got %q", got)
+		if got := transport.calls[0].Get("ContentVariables"); !strings.Contains(got, "alice's pick: Catan") {
+			t.Errorf("want {{2}} to include the game, got %q", got)
 		}
 	})
 

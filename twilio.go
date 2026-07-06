@@ -16,7 +16,11 @@ import (
 // TwilioClient is a thin wrapper over Twilio's REST API. Session reminders are
 // business-initiated (not replies to something the recipient just sent), so
 // WhatsApp requires them to use a pre-approved Content template rather than
-// free text — see ADR-0001.
+// free text. The WhatsApp Sandbox only offers its three fixed sample
+// templates — custom-worded templates require a verified business sender —
+// so reminder content is repurposed into the Sandbox's "Appointment
+// Reminders" template ("Your appointment is coming up on {{1}} at {{2}}").
+// See ADR-0001.
 
 // TwilioClient sends WhatsApp Content template messages via Twilio's REST API.
 type TwilioClient struct {
@@ -65,15 +69,15 @@ func (t *TwilioClient) SendTemplate(to, contentSID string, variables map[string]
 }
 
 // ReminderConfig holds everything needed to send Session reminders: Twilio
-// credentials and the two approved Content template SIDs (with vs. without a
-// pending pick for the current picker — see ADR-0001).
+// credentials and the Content SID of the Sandbox's "Appointment Reminders"
+// sample template (see ADR-0001) — the only kind of template the Sandbox
+// permits without a verified business sender.
 type ReminderConfig struct {
-	Client              *TwilioClient
-	TemplateNoPickSID   string
-	TemplateWithPickSID string
+	Client      *TwilioClient
+	TemplateSID string
 }
 
-// loadReminderConfig reads Twilio credentials and template SIDs from the
+// loadReminderConfig reads Twilio credentials and the template SID from the
 // environment. Returns nil if any are unset, disabling reminders entirely
 // (rather than failing startup) — a deploy without WhatsApp configured should
 // still serve the rest of the app.
@@ -81,15 +85,13 @@ func loadReminderConfig() *ReminderConfig {
 	sid := os.Getenv("TWILIO_ACCOUNT_SID")
 	token := os.Getenv("TWILIO_AUTH_TOKEN")
 	from := os.Getenv("TWILIO_WHATSAPP_FROM")
-	noPick := os.Getenv("TWILIO_TEMPLATE_NO_PICK_SID")
-	withPick := os.Getenv("TWILIO_TEMPLATE_WITH_PICK_SID")
-	if sid == "" || token == "" || from == "" || noPick == "" || withPick == "" {
+	templateSID := os.Getenv("TWILIO_TEMPLATE_SID")
+	if sid == "" || token == "" || from == "" || templateSID == "" {
 		return nil
 	}
 	return &ReminderConfig{
-		Client:              &TwilioClient{AccountSID: sid, AuthToken: token, From: from},
-		TemplateNoPickSID:   noPick,
-		TemplateWithPickSID: withPick,
+		Client:      &TwilioClient{AccountSID: sid, AuthToken: token, From: from},
+		TemplateSID: templateSID,
 	}
 }
 
@@ -128,15 +130,18 @@ func RunReminders(store StateStore, cfg *ReminderConfig, now time.Time, force bo
 		return 0, nil, err
 	}
 
-	templateSID := cfg.TemplateNoPickSID
-	variables := map[string]string{"1": content.SessionDate, "2": content.PickerName}
+	// Repurposed into "Your appointment is coming up on {{1}} at {{2}}" —
+	// {{1}} carries the session date as intended; {{2}} (nominally a time)
+	// carries who's picking and what they've chosen, since the Sandbox has
+	// no slot actually meant for that. See ADR-0001.
+	second := content.PickerName + "'s pick"
 	if content.GameName != "" {
-		templateSID = cfg.TemplateWithPickSID
-		variables["3"] = content.GameName
+		second += ": " + content.GameName
 	}
+	variables := map[string]string{"1": content.SessionDate, "2": second}
 
 	for _, p := range recipients {
-		if sendErr := cfg.Client.SendTemplate(p.Phone, templateSID, variables); sendErr != nil {
+		if sendErr := cfg.Client.SendTemplate(p.Phone, cfg.TemplateSID, variables); sendErr != nil {
 			sendErrs = append(sendErrs, fmt.Errorf("%s: %w", p.Name, sendErr))
 			continue
 		}

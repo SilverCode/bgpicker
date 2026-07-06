@@ -86,15 +86,16 @@ local editing overlays it (via the `pendingPick` computed) and never mutates
 it. `App.vue` is presentation only.
 
 **Reminders (backend module)** — behaviour for Session reminders: building the
-fan-out list (People with a phone number), choosing which of two WhatsApp
-templates to send (with vs. without a Pending pick for the current picker),
-and handling the inbound WhatsApp reply webhook that maps a phone number back
-to a Person and applies an exact yes/no match to Attendance. Runs from the
-same Lambda as the HTTP API — invoked on a daily EventBridge schedule, plus a
-manual `POST /api/reminders/send-now` route for testing; `main()`
-distinguishes a scheduler event from an HTTP event before routing. The inbound
-webhook does not validate Twilio's request signature, consistent with the
-rest of the app's no-auth model — the risk of a spoofed attendance flip was
+fan-out list (People with a phone number), formatting the session date,
+picker, and any Pending pick into the Sandbox's fixed "Appointment Reminders"
+template (see ADR-0001), and handling the inbound WhatsApp reply webhook that
+maps a phone number back to a Person and applies an exact yes/no match to
+Attendance. Runs from the same Lambda as the HTTP API — invoked on a daily
+EventBridge schedule, plus a manual `POST /api/reminders/send-now` route for
+testing; `main()` distinguishes a scheduler event from an HTTP event before
+routing. The inbound webhook does not validate Twilio's request signature,
+consistent with the rest of the app's no-auth model — the risk of a spoofed
+attendance flip was
 judged negligible.
 
 ## State persistence
