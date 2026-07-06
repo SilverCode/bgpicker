@@ -26,4 +26,4 @@ What becomes easier or harder as a result?
 
 ## Index
 
-_(none yet)_
+- [0001](0001-whatsapp-reminders-via-twilio-sandbox.md) — WhatsApp session reminders fan out to individuals via Twilio Sandbox

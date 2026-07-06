@@ -12,9 +12,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -47,10 +49,10 @@ const (
 )
 
 type Suggestion struct {
-	ID          string                  `json:"id"`
-	GameName    string                  `json:"gameName"`
-	SuggestedBy string                  `json:"suggestedBy"`
-	SuggestedAt time.Time               `json:"suggestedAt"`
+	ID          string                   `json:"id"`
+	GameName    string                   `json:"gameName"`
+	SuggestedBy string                   `json:"suggestedBy"`
+	SuggestedAt time.Time                `json:"suggestedAt"`
 	Votes       map[string]VoteDirection `json:"votes"`
 }
 
@@ -59,6 +61,7 @@ type Person struct {
 	Name      string          `json:"name"`
 	Position  int             `json:"position"`
 	Attending AttendanceState `json:"attending"`
+	Phone     string          `json:"phone,omitempty"` // E.164, optional; used for WhatsApp Session reminders
 }
 
 // UnmarshalJSON handles both the current string format and the legacy boolean
@@ -69,12 +72,13 @@ func (p *Person) UnmarshalJSON(data []byte) error {
 		Name      string          `json:"name"`
 		Position  int             `json:"position"`
 		Attending json.RawMessage `json:"attending"`
+		Phone     string          `json:"phone"`
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
 	}
-	p.ID, p.Name, p.Position = w.ID, w.Name, w.Position
+	p.ID, p.Name, p.Position, p.Phone = w.ID, w.Name, w.Position, w.Phone
 	if w.Attending == nil {
 		p.Attending = AttendanceUnknown
 		return nil
@@ -114,11 +118,12 @@ type PendingPick struct {
 }
 
 type State struct {
-	People      []Person     `json:"people"`
-	History     []Pick       `json:"history"`
-	PendingPick *PendingPick `json:"pendingPick,omitempty"`
-	NextSession *time.Time   `json:"nextSession,omitempty"`
-	Suggestions []Suggestion `json:"suggestions"`
+	People             []Person     `json:"people"`
+	History            []Pick       `json:"history"`
+	PendingPick        *PendingPick `json:"pendingPick,omitempty"`
+	NextSession        *time.Time   `json:"nextSession,omitempty"`
+	Suggestions        []Suggestion `json:"suggestions"`
+	RemindedForSession *time.Time   `json:"remindedForSession,omitempty"` // NextSession value already covered by a sent Session reminder
 }
 
 // ── StateStore — the seam between handlers and persistence ───────────────────
@@ -301,7 +306,6 @@ func (sb *s3Blob) Write(data []byte) error {
 func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
-
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -621,9 +625,88 @@ func makeHandleVote(store StateStore) http.HandlerFunc {
 	}
 }
 
+// PUT /api/people/{id}/phone  body: {"phone": "+15551234567"}
+func makeHandleSetPhone(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Phone string `json:"phone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonResponse(w, 400, map[string]string{"error": "invalid body"})
+			return
+		}
+		var result *State
+		err := store.Update(func(s *State) error {
+			if err := s.SetPhone(id, req.Phone); err != nil {
+				return err
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 200, result)
+	}
+}
+
+// POST /api/whatsapp/inbound — Twilio's webhook for inbound WhatsApp replies
+// (form-encoded: From, Body). Maps the sender's phone number to a Person and
+// applies an exact "yes"/"no" match to Attendance; anything else from a known
+// number gets a short nudge. Unknown numbers are ignored silently. Does not
+// validate Twilio's request signature — consistent with the rest of the
+// app's no-auth model (see CONTEXT.md).
+func makeHandleWhatsAppInbound(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			jsonResponse(w, 400, map[string]string{"error": "invalid form body"})
+			return
+		}
+		from := strings.TrimPrefix(r.FormValue("From"), "whatsapp:")
+		body := r.FormValue("Body")
+
+		var matched, recognized bool
+		err := store.Update(func(s *State) error {
+			matched, recognized = s.ApplyWhatsAppReply(from, body)
+			return nil
+		})
+		if err != nil {
+			jsonResponse(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(http.StatusOK)
+		if matched && !recognized {
+			io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Sorry, I didn't understand — reply YES or NO.</Message></Response>`)
+			return
+		}
+		io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`)
+	}
+}
+
+// POST /api/reminders/send-now — manual trigger for testing. Bypasses both
+// the 2-day lead window and the RemindedForSession idempotency gate.
+func makeHandleSendReminderNow(store StateStore, cfg *ReminderConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sent, sendErrs, err := RunReminders(store, cfg, time.Now(), true)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		errStrs := make([]string, len(sendErrs))
+		for i, e := range sendErrs {
+			errStrs[i] = e.Error()
+		}
+		jsonResponse(w, 200, map[string]interface{}{"sent": sent, "errors": errStrs})
+	}
+}
+
 // ── Wiring ────────────────────────────────────────────────────────────────────
 
-func buildMux(store StateStore) http.Handler {
+func buildMux(store StateStore, reminderCfg *ReminderConfig) http.Handler {
 	mux := http.NewServeMux()
 
 	distFS, err := fs.Sub(staticFiles, "frontend/dist")
@@ -645,11 +728,55 @@ func buildMux(store StateStore) http.Handler {
 	mux.HandleFunc("POST /api/suggestions", makeHandleAddSuggestion(store))
 	mux.HandleFunc("DELETE /api/suggestions/{id}", makeHandleDeleteSuggestion(store))
 	mux.HandleFunc("POST /api/suggestions/{id}/vote", makeHandleVote(store))
+	mux.HandleFunc("PUT /api/people/{id}/phone", makeHandleSetPhone(store))
+	mux.HandleFunc("POST /api/whatsapp/inbound", makeHandleWhatsAppInbound(store))
+	mux.HandleFunc("POST /api/reminders/send-now", makeHandleSendReminderNow(store, reminderCfg))
 
 	return corsMiddleware(mux)
 }
 
+// makeLambdaHandler dispatches a raw Lambda event to one of two paths:
+//   - An HTTP request (Function URL / API Gateway V2, payload format "2.0")
+//     goes through the existing httpadapter-backed mux.
+//   - Anything else (an EventBridge Scheduler trigger has no "version" field)
+//     runs the daily Session reminder check instead. A "not due yet" result
+//     is the common case and isn't treated as fatal — it's logged and the
+//     invocation succeeds with sent=0.
+//
+// This lets one Lambda function serve both the HTTP API and the scheduled
+// reminder job, with no second function to deploy (see CONTEXT.md's
+// Reminders module entry).
+func makeLambdaHandler(store StateStore, reminderCfg *ReminderConfig, mux http.Handler) func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+	adapter := httpadapter.NewV2(mux)
+	return func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		var probe struct {
+			Version string `json:"version"`
+		}
+		_ = json.Unmarshal(raw, &probe)
+
+		if probe.Version == "2.0" {
+			var req events.APIGatewayV2HTTPRequest
+			if err := json.Unmarshal(raw, &req); err != nil {
+				return nil, err
+			}
+			return adapter.ProxyWithContext(ctx, req)
+		}
+
+		sent, sendErrs, err := RunReminders(store, reminderCfg, time.Now(), false)
+		if err != nil {
+			log.Printf("reminder check: %v", err)
+			return map[string]any{"sent": 0}, nil
+		}
+		for _, e := range sendErrs {
+			log.Printf("reminder send failed: %v", e)
+		}
+		return map[string]any{"sent": sent}, nil
+	}
+}
+
 func main() {
+	reminderCfg := loadReminderConfig()
+
 	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
 		cfg, err := awsconfig.LoadDefaultConfig(context.Background())
 		if err != nil {
@@ -661,8 +788,8 @@ func main() {
 			bucket: bucket,
 			key:    "data.json",
 		})
-		log.Printf("bgpicker starting in Lambda mode (bucket: %s)", bucket)
-		lambda.Start(httpadapter.NewV2(buildMux(store)).ProxyWithContext)
+		log.Printf("bgpicker starting in Lambda mode (bucket: %s, reminders configured: %v)", bucket, reminderCfg != nil)
+		lambda.Start(makeLambdaHandler(store, reminderCfg, buildMux(store, reminderCfg)))
 		return
 	}
 
@@ -671,6 +798,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("bgpicker listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, buildMux(store)))
+	log.Printf("bgpicker listening on :%s (reminders configured: %v)", port, reminderCfg != nil)
+	log.Fatal(http.ListenAndServe(":"+port, buildMux(store, reminderCfg)))
 }

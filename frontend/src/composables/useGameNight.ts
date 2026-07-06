@@ -5,6 +5,7 @@ export interface Person {
   name: string
   position: number
   attending: '' | 'yes' | 'no'
+  phone?: string
 }
 
 export interface Pick {
@@ -190,6 +191,10 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     await run(() => fetcher('DELETE', `/api/people/${id}`))
   }
 
+  async function setPersonPhone(id: string, phone: string) {
+    await run(() => fetcher('PUT', `/api/people/${id}/phone`, { phone: phone.trim() }))
+  }
+
   async function submitPick() {
     const name = gameName.value.trim()
     const picker = currentPicker.value
@@ -309,6 +314,7 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     refresh,
     addPerson,
     removePerson,
+    setPersonPhone,
     submitPick,
     editPick,
     submitSkip,

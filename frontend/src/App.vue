@@ -241,7 +241,17 @@
 
         <div class="sheet-players">
           <div v-for="p in sortedPeople" :key="p.id" class="sheet-player-row">
-            <span class="sheet-player-name">{{ p.name }}</span>
+            <div class="sheet-player-info">
+              <span class="sheet-player-name">{{ p.name }}</span>
+              <input
+                v-model="phoneDrafts[p.id]"
+                class="sheet-phone-input"
+                type="tel"
+                placeholder="+1 555 123 4567 (for WhatsApp reminders)"
+                @blur="onSavePhone(p.id)"
+                @keydown.enter.prevent="onSavePhone(p.id)"
+              />
+            </div>
             <button class="btn-sheet-remove" @click="removePerson(p.id)">×</button>
           </div>
         </div>
@@ -274,7 +284,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import {
   useGameNight,
   createApiFetcher,
@@ -301,6 +311,7 @@ const {
   sortedSuggestions,
   addPerson,
   removePerson,
+  setPersonPhone,
   submitPick,
   submitSkip,
   confirmDone,
@@ -319,6 +330,16 @@ const showSettings = ref(false)
 const activeTab = ref<'night' | 'suggestions'>('night')
 const newName = ref('')
 const suggestGameName = ref('')
+const phoneDrafts = reactive<Record<string, string>>({})
+
+// Populate phone drafts from server state each time the settings sheet opens,
+// so edits aren't clobbered by a poll while it's closed.
+watch(showSettings, (open) => {
+  if (!open) return
+  for (const p of sortedPeople.value) {
+    phoneDrafts[p.id] = p.phone ?? ''
+  }
+})
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -400,6 +421,13 @@ function votePillClass(vote: VoteDirection): string {
 
 async function onAddPerson() {
   if (await addPerson(newName.value)) newName.value = ''
+}
+
+async function onSavePhone(id: string) {
+  const phone = (phoneDrafts[id] ?? '').trim()
+  const current = sortedPeople.value.find((p) => p.id === id)?.phone ?? ''
+  if (phone === current) return
+  await setPersonPhone(id, phone)
 }
 
 async function onDoneClick() {
@@ -1005,12 +1033,30 @@ function onVote(s: Suggestion, direction: VoteDirection) {
 .sheet-player-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid #1e1e32;
 }
 .sheet-player-row:last-child { border-bottom: none; }
+.sheet-player-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
 .sheet-player-name { font-size: 14px; color: #c8c8e8; font-weight: 500; }
+.sheet-phone-input {
+  background: #12121e;
+  border: 1px solid #252540;
+  border-radius: 6px;
+  color: #c8c8e8;
+  padding: 5px 8px;
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+.sheet-phone-input:focus { border-color: #6254c8; }
+.sheet-phone-input::placeholder { color: #3a3a58; }
 .btn-sheet-remove {
   background: none;
   border: none;
