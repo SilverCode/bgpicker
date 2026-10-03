@@ -532,9 +532,7 @@ func makeHandleReorder(store StateStore) http.HandlerFunc {
 		}
 		var result *State
 		err := store.Update(func(s *State) error {
-			q := NewQueue(s.People)
-			q.Reorder(req.IDs)
-			s.People = q.People()
+			s.ReorderQueue(req.IDs)
 			result = s
 			return nil
 		})

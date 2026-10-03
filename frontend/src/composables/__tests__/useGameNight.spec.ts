@@ -362,3 +362,54 @@ describe('drag reorder', () => {
     app.unmount()
   })
 })
+
+// ── move person ───────────────────────────────────────────────────────────────
+
+describe('movePerson', () => {
+  it('moves a person down one place and sends the new order', async () => {
+    const api = fakeFetcher(baseState())
+    const { result, app } = withSetup(() => useGameNight(api.fetcher))
+    await flush()
+
+    api.respondWith(
+      baseState({
+        people: [person('bob', 0), person('alice', 1), person('charlie', 2)],
+      }),
+    )
+    await result.movePerson('alice', 1)
+
+    expect(api.lastCall()).toEqual({
+      method: 'PUT',
+      path: '/api/people/reorder',
+      body: { ids: ['bob', 'alice', 'charlie'] },
+    })
+    expect(result.sortedPeople.value.map((p) => p.id)).toEqual(['bob', 'alice', 'charlie'])
+    app.unmount()
+  })
+
+  it('does nothing when moving past either end', async () => {
+    const api = fakeFetcher(baseState())
+    const { result, app } = withSetup(() => useGameNight(api.fetcher))
+    await flush()
+    const callsBefore = api.calls.length
+
+    await result.movePerson('alice', -1)
+    await result.movePerson('charlie', 1)
+
+    expect(api.calls.length).toBe(callsBefore)
+    app.unmount()
+  })
+
+  it('rolls back when the reorder fails', async () => {
+    const api = fakeFetcher(baseState())
+    const { result, app } = withSetup(() => useGameNight(api.fetcher))
+    await flush()
+
+    api.failWith('reorder failed')
+    await result.movePerson('alice', 1)
+
+    expect(result.error.value).toBe('reorder failed')
+    expect(result.dragList.value.map((p) => p.id)).toEqual(['alice', 'bob', 'charlie'])
+    app.unmount()
+  })
+})

@@ -237,14 +237,42 @@
           />
           <button class="btn-sheet-add" :disabled="busy" @click="onAddPerson">+ Add</button>
         </div>
-        <div v-if="sortedPeople.length" class="sheet-hint">Tap × to remove a player.</div>
-
-        <div class="sheet-players">
-          <div v-for="p in sortedPeople" :key="p.id" class="sheet-player-row">
-            <span class="sheet-player-name">{{ p.name }}</span>
-            <button class="btn-sheet-remove" @click="removePerson(p.id)">×</button>
-          </div>
+        <div v-if="sortedPeople.length" class="sheet-hint">
+          Drag ⠿ or use ▲▼ to change the pick order. Tap × to remove a player.
         </div>
+
+        <draggable
+          v-model="dragList"
+          item-key="id"
+          handle=".sheet-drag-handle"
+          class="sheet-players"
+          :disabled="busy"
+          @start="dragging = true"
+          @end="onDragEnd"
+        >
+          <template #item="{ element: p, index: i }">
+            <div class="sheet-player-row">
+              <span class="sheet-drag-handle" aria-label="Drag to reorder">⠿</span>
+              <span class="sheet-player-pos">{{ i + 1 }}</span>
+              <span class="sheet-player-name">{{ p.name }}</span>
+              <div class="sheet-player-actions">
+                <button
+                  class="btn-sheet-move"
+                  :disabled="busy || i === 0"
+                  aria-label="Move up"
+                  @click="movePerson(p.id, -1)"
+                >▲</button>
+                <button
+                  class="btn-sheet-move"
+                  :disabled="busy || i === dragList.length - 1"
+                  aria-label="Move down"
+                  @click="movePerson(p.id, 1)"
+                >▼</button>
+                <button class="btn-sheet-remove" aria-label="Remove" @click="removePerson(p.id)">×</button>
+              </div>
+            </div>
+          </template>
+        </draggable>
 
         <div class="sheet-divider" />
 
@@ -275,6 +303,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import draggable from 'vuedraggable'
 import {
   useGameNight,
   createApiFetcher,
@@ -307,6 +336,10 @@ const {
   toggleAttendance,
   resetData,
   updateSessionDate,
+  dragging,
+  dragList,
+  onDragEnd,
+  movePerson,
   addSuggestion,
   removeSuggestion,
   voteOnSuggestion,
@@ -1005,12 +1038,37 @@ function onVote(s: Suggestion, direction: VoteDirection) {
 .sheet-player-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid #1e1e32;
+  background: #1a1a2e;
 }
 .sheet-player-row:last-child { border-bottom: none; }
-.sheet-player-name { font-size: 14px; color: #c8c8e8; font-weight: 500; }
+.sheet-player-row.sortable-ghost { opacity: 0.4; }
+.sheet-drag-handle {
+  color: #5a5a7a;
+  font-size: 18px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  padding: 4px 2px;
+}
+.sheet-drag-handle:active { cursor: grabbing; }
+.sheet-player-pos { font-size: 12px; color: #5a5a7a; min-width: 14px; text-align: right; }
+.sheet-player-name { flex: 1; font-size: 14px; color: #c8c8e8; font-weight: 500; }
+.sheet-player-actions { display: flex; align-items: center; gap: 4px; }
+.btn-sheet-move {
+  background: #12121e;
+  border: 1px solid #252540;
+  border-radius: 6px;
+  color: #8b8ba8;
+  font-size: 11px;
+  width: 30px;
+  height: 30px;
+  transition: background 0.12s, color 0.12s;
+}
+.btn-sheet-move:not(:disabled):hover { background: #1c1c38; color: #e8e8f4; }
+.btn-sheet-move:disabled { opacity: 0.3; cursor: not-allowed; }
 .btn-sheet-remove {
   background: none;
   border: none;

@@ -46,6 +46,11 @@ Votes from removed people are not audited — they remain in the tally.
 **Suggestions list** — all current Suggestions ordered by net score (up count
 minus down count) descending, ties broken by suggestion age (oldest first).
 
+**Reorder** — anyone can set an explicit queue order from Settings (drag or
+▲▼), as a fallback when skips go wrong or the group wants a different order.
+If the reorder changes who is at position 0, any pending pick is cleared — it
+belonged to the previous picker.
+
 **Next session** — a date stored on the state object. Defaults to the next
 upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
 
@@ -55,8 +60,8 @@ Each tap cycles unknown → yes → no → unknown. Independent of queue actions
 Reset to unknown on Done and on Reset. Reset also clears the Suggestions list.
 
 **Session (backend module)** — the night lifecycle as behaviour on `State`
-(`session.go`): `SetPendingPick`, `SkipTurn`, `FinishNight`, `CycleAttendance`,
-`Reset`, plus the session-date functions (14 days, snapped to Tuesday). Each
+(`session.go`): `SetPendingPick`, `SkipTurn`, `FinishNight`, `ReorderQueue`,
+`CycleAttendance`, `Reset`, plus the session-date functions (14 days, snapped to Tuesday). Each
 handler calls exactly one Session method inside `store.Update` and does no
 domain work itself. Methods take `now` explicitly and assume a normalised
 State; errors are `domainErr` values (caller fault vs system fault).

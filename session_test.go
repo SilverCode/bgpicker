@@ -111,6 +111,39 @@ func TestSetPendingPick(t *testing.T) {
 	})
 }
 
+// ── ReorderQueue ──────────────────────────────────────────────────────────────
+
+func TestReorderQueue(t *testing.T) {
+	now := date(2026, 6, 11)
+
+	t.Run("applies the new order", func(t *testing.T) {
+		s := queue("alice", "bob", "charlie")
+		s.ReorderQueue([]string{"charlie", "alice", "bob"})
+		pos := posMap(s.People)
+		if pos[0] != "charlie" || pos[1] != "alice" || pos[2] != "bob" {
+			t.Errorf("want [charlie alice bob], got %v", pos)
+		}
+	})
+
+	t.Run("keeps the pending pick when the picker is unchanged", func(t *testing.T) {
+		s := queue("alice", "bob", "charlie")
+		s.PendingPick = &PendingPick{PersonID: "alice", GameName: "Catan", SetAt: now}
+		s.ReorderQueue([]string{"alice", "charlie", "bob"})
+		if s.PendingPick == nil {
+			t.Error("pending pick should survive a reorder that keeps alice on top")
+		}
+	})
+
+	t.Run("clears the pending pick when the picker changes", func(t *testing.T) {
+		s := queue("alice", "bob", "charlie")
+		s.PendingPick = &PendingPick{PersonID: "alice", GameName: "Catan", SetAt: now}
+		s.ReorderQueue([]string{"bob", "alice", "charlie"})
+		if s.PendingPick != nil {
+			t.Errorf("want pending pick cleared, got %+v", s.PendingPick)
+		}
+	})
+}
+
 // ── SkipTurn ──────────────────────────────────────────────────────────────────
 
 func TestSkipTurn(t *testing.T) {

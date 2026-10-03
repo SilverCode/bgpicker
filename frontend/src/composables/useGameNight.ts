@@ -274,6 +274,19 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     }
   }
 
+  // Move one person up (delta -1) or down (delta +1) and save the new order.
+  // Same optimistic path as a drag: reorder dragList locally, then sync.
+  async function movePerson(id: string, delta: number) {
+    const list = [...dragList.value]
+    const from = list.findIndex((p) => p.id === id)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= list.length) return
+    const [moved] = list.splice(from, 1)
+    list.splice(to, 0, moved!)
+    dragList.value = list
+    await onDragEnd()
+  }
+
   // ── lifecycle ─────────────────────────────────────────────────────────────
 
   onMounted(() => {
@@ -317,6 +330,7 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     resetData,
     updateSessionDate,
     onDragEnd,
+    movePerson,
     addSuggestion,
     removeSuggestion,
     voteOnSuggestion,

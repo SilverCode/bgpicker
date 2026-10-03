@@ -103,6 +103,20 @@ func (s *State) FinishNight(id string, now time.Time) error {
 	return nil
 }
 
+// ReorderQueue sets an explicit queue order (see Queue.Reorder). If the
+// current picker changes, any pending pick is cleared: it belonged to the old
+// picker, and leaving it would block the new picker from finishing the night.
+func (s *State) ReorderQueue(ids []string) {
+	q := NewQueue(s.People)
+	q.Reorder(ids)
+	s.People = q.People()
+	if s.PendingPick != nil {
+		if cur := q.Current(); cur == nil || cur.ID != s.PendingPick.PersonID {
+			s.PendingPick = nil
+		}
+	}
+}
+
 // CycleAttendance advances a person's attendance: unknown → yes → no → unknown.
 func (s *State) CycleAttendance(id string) error {
 	for i := range s.People {
