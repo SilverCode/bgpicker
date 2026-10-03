@@ -155,7 +155,7 @@
             <div v-if="recentHistory.length" class="section">
               <div class="section-hdr">RECENT PICKS</div>
               <div class="history-list">
-                <div v-for="(pick, i) in recentHistory.slice(0, 5)" :key="i" class="h-row">
+                <div v-for="pick in recentHistory.slice(0, 5)" :key="pick.id" class="h-row">
                   <span class="h-person">{{ nameById(pick.personId) }}</span>
                   <span v-if="!pick.skipped" class="h-game">{{ pick.gameName }}</span>
                   <span v-else class="h-game h-game--skip">skipped</span>
@@ -276,6 +276,29 @@
 
         <div class="sheet-divider" />
 
+        <template v-if="allHistory.length">
+          <div class="sheet-section-label">PREVIOUS PICKS</div>
+          <div class="sheet-hint">
+            Tap × to remove a pick from the history. The queue order is not changed.
+          </div>
+          <div class="sheet-picks">
+            <div v-for="pick in allHistory" :key="pick.id" class="sheet-pick-row">
+              <span class="sheet-pick-date">{{ formatDate(pick.pickedAt) }}</span>
+              <span class="sheet-pick-person">{{ nameById(pick.personId) }}</span>
+              <span v-if="!pick.skipped" class="sheet-pick-game">{{ pick.gameName }}</span>
+              <span v-else class="sheet-pick-game sheet-pick-game--skip">skipped</span>
+              <button
+                class="btn-sheet-remove"
+                :disabled="busy"
+                aria-label="Remove pick"
+                @click="removePick(pick.id)"
+              >×</button>
+            </div>
+          </div>
+
+          <div class="sheet-divider" />
+        </template>
+
         <div class="sheet-date-hdr">
           <span>📅</span>
           <span>Next session date</span>
@@ -326,6 +349,7 @@ const {
   currentPicker,
   queueLength,
   recentHistory,
+  allHistory,
   attendingCount,
   sortedSuggestions,
   addPerson,
@@ -335,6 +359,7 @@ const {
   confirmDone,
   toggleAttendance,
   resetData,
+  removePick,
   updateSessionDate,
   dragging,
   dragList,
@@ -1079,6 +1104,30 @@ function onVote(s: Suggestion, direction: VoteDirection) {
   transition: color 0.12s;
 }
 .btn-sheet-remove:hover { color: #f87171; }
+
+.sheet-picks { display: flex; flex-direction: column; }
+.sheet-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #1e1e32;
+  font-size: 13px;
+}
+.sheet-pick-row:last-child { border-bottom: none; }
+.sheet-pick-date { color: #5a5a7a; min-width: 48px; }
+.sheet-pick-person { color: #8b8ba8; min-width: 0; }
+.sheet-pick-game {
+  flex: 1;
+  min-width: 0;
+  color: #c8c8e8;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-pick-game--skip { color: #5a5a7a; font-style: italic; font-weight: 400; }
+.btn-sheet-remove:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .sheet-divider { height: 1px; background: #1e1e32; margin: 4px 0; }
 .sheet-date-hdr {

@@ -57,6 +57,7 @@ func (s *State) SkipTurn(id string, now time.Time) error {
 	}
 	q.Skip()
 	s.History = append(s.History, Pick{
+		ID:       generateID(),
 		PersonID: id,
 		PickedAt: now,
 		Skipped:  true,
@@ -79,6 +80,7 @@ func (s *State) FinishNight(id string, now time.Time) error {
 	pickedLower := strings.ToLower(s.PendingPick.GameName)
 	q.Rotate()
 	s.History = append(s.History, Pick{
+		ID:       generateID(),
 		PersonID: id,
 		GameName: s.PendingPick.GameName,
 		PickedAt: now,
@@ -133,6 +135,18 @@ func (s *State) CycleAttendance(id string) error {
 		}
 	}
 	return domainErr(404, "person not found")
+}
+
+// RemovePick deletes one history entry by ID. The queue is not touched —
+// this corrects the record, it does not undo the rotation or skip.
+func (s *State) RemovePick(id string) error {
+	for i, p := range s.History {
+		if p.ID == id {
+			s.History = append(s.History[:i], s.History[i+1:]...)
+			return nil
+		}
+	}
+	return domainErr(404, "pick not found")
 }
 
 // Reset clears history, the pending pick, all attendance flags, and all

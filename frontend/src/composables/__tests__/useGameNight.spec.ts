@@ -250,6 +250,21 @@ describe('actions', () => {
     app.unmount()
   })
 
+  it('removePick deletes the history entry and applies the result', async () => {
+    const pick = { id: 'p1', personId: 'alice', gameName: 'Catan', pickedAt: '2026-06-09T00:00:00Z', skipped: false }
+    const api = fakeFetcher(baseState({ history: [pick] }))
+    const { result, app } = withSetup(() => useGameNight(api.fetcher))
+    await flush()
+    expect(result.allHistory.value).toHaveLength(1)
+
+    api.respondWith(baseState({ history: [] }))
+    await result.removePick('p1')
+
+    expect(api.lastCall()).toEqual({ method: 'DELETE', path: '/api/history/p1', body: undefined })
+    expect(result.allHistory.value).toHaveLength(0)
+    app.unmount()
+  })
+
   it('toggleAttendance posts to the attend endpoint and applies the result', async () => {
     const api = fakeFetcher(baseState())
     const { result, app } = withSetup(() => useGameNight(api.fetcher))

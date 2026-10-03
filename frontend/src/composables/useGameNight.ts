@@ -8,6 +8,7 @@ export interface Person {
 }
 
 export interface Pick {
+  id: string
   personId: string
   gameName: string
   pickedAt: string
@@ -99,10 +100,13 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
 
   const queueLength = computed(() => sortedPeople.value.length)
 
-  const recentHistory = computed<Pick[]>(() => {
+  // Newest first.
+  const allHistory = computed<Pick[]>(() => {
     if (!state.value) return []
-    return [...state.value.history].reverse().slice(0, 8)
+    return [...state.value.history].reverse()
   })
+
+  const recentHistory = computed<Pick[]>(() => allHistory.value.slice(0, 8))
 
   const attendingCount = computed(
     () => sortedPeople.value.filter((p) => p.attending === 'yes').length,
@@ -255,6 +259,10 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     }
   }
 
+  async function removePick(id: string) {
+    await run(() => fetcher('DELETE', `/api/history/${id}`))
+  }
+
   async function removeSuggestion(id: string) {
     await run(() => fetcher('DELETE', `/api/suggestions/${id}`))
   }
@@ -315,6 +323,7 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     currentPicker,
     queueLength,
     recentHistory,
+    allHistory,
     attendingCount,
     pendingPick,
     sortedSuggestions,
@@ -328,6 +337,7 @@ export function useGameNight(fetcher: Fetcher, opts: GameNightOptions = {}) {
     confirmDone,
     toggleAttendance,
     resetData,
+    removePick,
     updateSessionDate,
     onDragEnd,
     movePerson,

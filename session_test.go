@@ -376,6 +376,62 @@ func TestAddSuggestion(t *testing.T) {
 	})
 }
 
+// ── RemovePick ────────────────────────────────────────────────────────────────
+
+func TestRemovePick(t *testing.T) {
+	now := date(2026, 6, 11)
+
+	t.Run("removes only the matching entry and leaves the queue alone", func(t *testing.T) {
+		s := queue("alice", "bob")
+		s.History = []Pick{
+			{ID: "p1", PersonID: "alice", GameName: "Catan", PickedAt: now},
+			{ID: "p2", PersonID: "bob", Skipped: true, PickedAt: now},
+			{ID: "p3", PersonID: "bob", GameName: "Azul", PickedAt: now},
+		}
+		if err := s.RemovePick("p2"); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.History) != 2 || s.History[0].ID != "p1" || s.History[1].ID != "p3" {
+			t.Errorf("want [p1 p3], got %+v", s.History)
+		}
+		pos := posMap(s.People)
+		if pos[0] != "alice" || pos[1] != "bob" {
+			t.Errorf("queue should be unchanged, got %v", pos)
+		}
+	})
+
+	t.Run("unknown ID is 404", func(t *testing.T) {
+		s := queue("alice")
+		wantDomainErr(t, s.RemovePick("nope"), 404)
+	})
+
+	t.Run("new history entries get IDs", func(t *testing.T) {
+		s := queue("alice", "bob")
+		if err := s.SkipTurn("alice", now); err != nil {
+			t.Fatal(err)
+		}
+		if s.History[0].ID == "" {
+			t.Error("skip entry should have an ID")
+		}
+	})
+}
+
+func TestNormalizeState_BackfillsPickIDs(t *testing.T) {
+	at := date(2026, 6, 11)
+	s := State{History: []Pick{{PersonID: "alice", PickedAt: at}, {PersonID: "bob", PickedAt: at}}}
+	normalizeState(&s)
+	first := []string{s.History[0].ID, s.History[1].ID}
+	if first[0] == "" || first[0] == first[1] {
+		t.Fatalf("want distinct non-empty IDs, got %v", first)
+	}
+	// Re-normalising an unsaved copy must yield the same IDs.
+	again := State{History: []Pick{{PersonID: "alice", PickedAt: at}, {PersonID: "bob", PickedAt: at}}}
+	normalizeState(&again)
+	if again.History[0].ID != first[0] || again.History[1].ID != first[1] {
+		t.Errorf("backfilled IDs not stable: %v vs %v", first, []string{again.History[0].ID, again.History[1].ID})
+	}
+}
+
 // ── RemoveSuggestion ──────────────────────────────────────────────────────────
 
 func TestRemoveSuggestion(t *testing.T) {

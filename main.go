@@ -99,6 +99,7 @@ func (p *Person) UnmarshalJSON(data []byte) error {
 }
 
 type Pick struct {
+	ID       string    `json:"id"`
 	PersonID string    `json:"personId"`
 	GameName string    `json:"gameName"`
 	PickedAt time.Time `json:"pickedAt"`
@@ -164,6 +165,13 @@ func normalizeState(s *State) {
 	}
 	if s.History == nil {
 		s.History = []Pick{}
+	}
+	// Picks saved before history entries had IDs get a deterministic one, so
+	// the same entry has the same ID on every read until it is next written.
+	for i := range s.History {
+		if s.History[i].ID == "" {
+			s.History[i].ID = fmt.Sprintf("h%d-%d", s.History[i].PickedAt.UnixNano(), i)
+		}
 	}
 	if s.NextSession == nil {
 		next := nextUpcomingTuesdayFrom(time.Now())
@@ -544,6 +552,26 @@ func makeHandleReorder(store StateStore) http.HandlerFunc {
 	}
 }
 
+// DELETE /api/history/{id}
+func makeHandleDeletePick(store StateStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var result *State
+		err := store.Update(func(s *State) error {
+			if err := s.RemovePick(id); err != nil {
+				return err
+			}
+			result = s
+			return nil
+		})
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		jsonResponse(w, 200, result)
+	}
+}
+
 // POST /api/suggestions  body: {"gameName": string, "personId": string}
 func makeHandleAddSuggestion(store StateStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +668,7 @@ func buildMux(store StateStore) http.Handler {
 	mux.HandleFunc("PUT /api/people/reorder", makeHandleReorder(store))
 	mux.HandleFunc("PUT /api/session", makeHandleSetSession(store))
 	mux.HandleFunc("POST /api/reset", makeHandleReset(store))
+	mux.HandleFunc("DELETE /api/history/{id}", makeHandleDeletePick(store))
 	mux.HandleFunc("POST /api/suggestions", makeHandleAddSuggestion(store))
 	mux.HandleFunc("DELETE /api/suggestions/{id}", makeHandleDeleteSuggestion(store))
 	mux.HandleFunc("POST /api/suggestions/{id}/vote", makeHandleVote(store))

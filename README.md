@@ -57,6 +57,7 @@ State is persisted to `data.json` locally, or to an S3 object when running in La
 | POST | `/api/people/:id/done` | Finalise the pending pick — records history, rotates picker to end, resets attendance, advances next session |
 | POST | `/api/people/:id/attend` | Cycle attendance: unknown → yes → no → unknown |
 | PUT | `/api/people/reorder` | Set explicit order `{"ids":[…]}` |
+| DELETE | `/api/history/:id` | Remove one past pick or skip from history (queue unchanged) |
 | PUT | `/api/session` | Override next session date `{"date":"YYYY-MM-DD"}` |
 | POST | `/api/reset` | Clear history, pending pick, attendance and suggestions (queue order and session date kept) |
 | POST | `/api/suggestions` | Suggest a game `{"gameName":"…","personId":"…"}` — 409 if already suggested |

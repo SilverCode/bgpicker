@@ -51,6 +51,11 @@ minus down count) descending, ties broken by suggestion age (oldest first).
 If the reorder changes who is at position 0, any pending pick is cleared — it
 belonged to the previous picker.
 
+**History** — the record of finished picks and skips, each with an ID. Any
+single entry can be removed from Settings to correct a mistake; this only edits
+the record and never changes the queue. Reset clears all of it. Entries saved
+before IDs existed get a deterministic ID (`h<pickedAt-nanos>-<index>`) on load.
+
 **Next session** — a date stored on the state object. Defaults to the next
 upcoming Tuesday. Advances automatically on Done. Can be overridden manually.
 
@@ -61,7 +66,7 @@ Reset to unknown on Done and on Reset. Reset also clears the Suggestions list.
 
 **Session (backend module)** — the night lifecycle as behaviour on `State`
 (`session.go`): `SetPendingPick`, `SkipTurn`, `FinishNight`, `ReorderQueue`,
-`CycleAttendance`, `Reset`, plus the session-date functions (14 days, snapped to Tuesday). Each
+`CycleAttendance`, `RemovePick`, `Reset`, plus the session-date functions (14 days, snapped to Tuesday). Each
 handler calls exactly one Session method inside `store.Update` and does no
 domain work itself. Methods take `now` explicitly and assume a normalised
 State; errors are `domainErr` values (caller fault vs system fault).
