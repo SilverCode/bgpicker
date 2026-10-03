@@ -35,5 +35,3 @@ frontend/.oxlintrc.json
 frontend/.prettierrc.json
 frontend/README.md
 frontend/eslint.config.ts
-frontend/tsconfig.vitest.json
-frontend/vitest.config.ts
