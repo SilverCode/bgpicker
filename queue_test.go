@@ -193,6 +193,54 @@ func TestSkip_EmptyQueue_Noop(t *testing.T) {
 	q.Skip() // must not panic
 }
 
+// withAttending marks the given IDs as attending.
+func withAttending(people []Person, attendingIDs ...string) []Person {
+	for _, id := range attendingIDs {
+		for i := range people {
+			if people[i].ID == id {
+				people[i].Attending = AttendanceYes
+			}
+		}
+	}
+	return people
+}
+
+func TestSkip_MovesAfterFirstAttending(t *testing.T) {
+	q := NewQueue(withAttending(makePersons("alice", "bob", "charlie", "dave"), "charlie", "dave"))
+	q.Skip()
+	got := ids(q)
+	want := []string{"bob", "charlie", "alice", "dave"}
+	for i, id := range want {
+		if got[i] != id {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+	}
+}
+
+func TestSkip_IgnoresNonAttendingAndUnknown(t *testing.T) {
+	people := withAttending(makePersons("alice", "bob", "charlie", "dave"), "dave")
+	people[1].Attending = AttendanceNo
+	q := NewQueue(people)
+	q.Skip()
+	got := ids(q)
+	want := []string{"bob", "charlie", "dave", "alice"}
+	for i, id := range want {
+		if got[i] != id {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+	}
+}
+
+func TestSkip_TwoSkipsReachThirdPerson(t *testing.T) {
+	// The bug: alice and bob both skipping used to ping-pong between them.
+	q := NewQueue(withAttending(makePersons("alice", "bob", "charlie"), "charlie"))
+	q.Skip()
+	q.Skip()
+	if q.Current().ID != "charlie" {
+		t.Errorf("want charlie as picker after two skips, got %v", ids(q))
+	}
+}
+
 func TestSkip_TwiceMirrorsOriginal(t *testing.T) {
 	q := NewQueue(makePersons("alice", "bob", "charlie"))
 	q.Skip()

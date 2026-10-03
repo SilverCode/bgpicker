@@ -74,15 +74,27 @@ func (q *Queue) Remove(id string) bool {
 	return false
 }
 
-// Skip swaps the current picker (position 0) with the person at position 1.
+// Skip moves the current picker (position 0) to just after the first person
+// behind them who is attending; everyone in between shifts up by one. If
+// nobody behind them is attending, it falls back to swapping with position 1.
 // No-op if the queue has fewer than 2 people.
 func (q *Queue) Skip() {
 	if len(q.people) < 2 {
 		return
 	}
-	q.people[0], q.people[1] = q.people[1], q.people[0]
-	q.people[0].Position = 0
-	q.people[1].Position = 1
+	target := 1
+	for i := 1; i < len(q.people); i++ {
+		if q.people[i].Attending == AttendanceYes {
+			target = i
+			break
+		}
+	}
+	first := q.people[0]
+	copy(q.people[:target], q.people[1:target+1])
+	q.people[target] = first
+	for i := 0; i <= target; i++ {
+		q.people[i].Position = i
+	}
 }
 
 // Rotate moves the current picker (position 0) to the last position and

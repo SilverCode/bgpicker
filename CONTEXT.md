@@ -14,9 +14,11 @@ attendance flag for the upcoming session.
 *current picker*. After a game night ends the picker moves to the end (position
 n−1) and everyone else shifts up by one.
 
-**Skip** — the current picker defers to the next person *without* going to the
-back of the queue. Their position swaps with position 1 so they remain close to
-the front.
+**Skip** — the current picker defers *without* going to the back of the queue.
+They move to just after the first person behind them whose attendance is *yes*;
+everyone in between shifts up by one. If nobody behind them is attending, they
+swap with position 1. This guarantees consecutive skips reach an attending
+person rather than ping-ponging between the top two.
 
 **Pending pick** — when the current picker types a game name and clicks
 "Pick this game", the choice is immediately written to the server as a
